@@ -1,0 +1,221 @@
+.village-map {
+    position: relative;
+
+    width: 100vw;
+    height: 100vh;
+}
+
+
+.village-map > div {
+    width: 100%;
+    height: 100%;
+}
+
+
+/* =========================
+   SEARCH
+========================= */
+
+.map-search {
+    margin-top: 12px;
+
+    width: 420px;
+}
+
+
+/* =========================
+   TOOLBAR
+========================= */
+
+.map-toolbar {
+
+    margin: 12px;
+
+    padding: 10px;
+
+    display: flex;
+
+    flex-direction: column;
+
+    gap: 8px;
+
+    background: white;
+
+    border-radius: 10px;
+
+    box-shadow:
+        0 2px 10px
+        rgba(0, 0, 0, 0.25);
+
+    min-width: 190px;
+}
+
+
+.map-toolbar button {
+
+    border: none;
+
+    border-radius: 7px;
+
+    padding: 11px 15px;
+
+    font-size: 14px;
+
+    font-weight: 600;
+
+    cursor: pointer;
+
+    background: #ffffff;
+
+    transition:
+        background 0.2s,
+        transform 0.1s;
+}
+
+
+.map-toolbar button:hover {
+
+    background: #f1f3f4;
+}
+
+
+.map-toolbar button:active {
+
+    transform: scale(0.98);
+}
+
+
+.draw-button {
+
+    color: #1565c0;
+
+    border: 1px solid #1976d2 !important;
+}
+
+
+.contour-button {
+
+    background: #1565c0 !important;
+
+    color: white;
+}
+
+
+.contour-button:hover {
+
+    background: #0d47a1 !important;
+}
+
+
+.clear-button {
+
+    color: #c62828;
+}
+
+
+/* =========================
+   DRAWING STATUS
+========================= */
+
+.drawing-status {
+
+    display: flex;
+
+    flex-direction: column;
+
+    gap: 5px;
+
+    padding: 5px 8px;
+
+    color: #1565c0;
+
+    font-size: 14px;
+
+    font-weight: 600;
+}
+
+
+.drawing-status small {
+
+    color: #666;
+
+    font-weight: 400;
+
+    font-size: 12px;
+}
+
+
+/* =========================
+   ERROR
+========================= */
+
+.map-error {
+
+    position: absolute;
+
+    top: 80px;
+
+    left: 50%;
+
+    transform: translateX(-50%);
+
+    z-index: 20;
+
+    background: #ffebee;
+
+    color: #c62828;
+
+    padding: 12px 20px;
+
+    border-radius: 8px;
+
+    box-shadow:
+        0 2px 8px
+        rgba(0, 0, 0, 0.25);
+}
+.terrain-settings {
+
+    display: flex;
+
+    flex-direction: column;
+
+    gap: 5px;
+
+    padding: 5px;
+}
+
+
+.terrain-settings label {
+
+    font-size: 12px;
+
+    font-weight: 600;
+
+    color: #555;
+
+    margin-top: 4px;
+}
+
+
+.terrain-settings select {
+
+    padding: 8px;
+
+    border: 1px solid #ddd;
+
+    border-radius: 6px;
+
+    background: white;
+
+    font-size: 13px;
+
+    cursor: pointer;
+
+    outline: none;
+}
+
+
+.terrain-settings select:focus {
+
+    border-color: #1976d2;
+}
