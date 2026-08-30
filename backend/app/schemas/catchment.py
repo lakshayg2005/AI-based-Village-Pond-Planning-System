@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 
@@ -47,6 +49,30 @@ class TerrainStats(BaseModel):
     contour_validation: ContourValidation
 
 
+class FlowAccumulationStats(BaseModel):
+    min: int = Field(ge=1)
+    max: int = Field(ge=1)
+    mean: float = Field(ge=1)
+    total_cells: int = Field(ge=1)
+    cells_gt_10: int = Field(ge=0)
+    cells_gt_100: int = Field(ge=0)
+    cells_gt_1000: int = Field(ge=0)
+
+
+class PondCandidateResponse(BaseModel):
+    rank: int = Field(ge=1)
+    row: int = Field(ge=0)
+    col: int = Field(ge=0)
+
+    longitude: float
+    latitude: float
+
+    elevation_m: float
+    slope_percent: float
+    flow_accumulation: int = Field(ge=1)
+    score: float = Field(ge=0, le=1)
+
+
 class HydrologyStats(BaseModel):
     dem_filled: bool
     filled_cell_count: int = Field(ge=0)
@@ -55,6 +81,34 @@ class HydrologyStats(BaseModel):
     flowing_cell_count: int = Field(ge=0)
     no_flow_cell_count: int = Field(ge=0)
     d8_algorithm: str
+    flow_accumulation: FlowAccumulationStats
+    pond_candidates: list[PondCandidateResponse]
+
+
+class CatchmentResponse(BaseModel):
+    area_m2: float = Field(ge=0)
+    area_hectares: float = Field(ge=0)
+    cell_count: int = Field(ge=0)
+
+    geometry: dict[str, Any]
+
+
+class SuitabilityStats(BaseModel):
+    max_slope_percent: float = Field(gt=0)
+    minimum_accumulation: int = Field(ge=1)
+    candidate_count: int = Field(ge=0)
+
+class SuitabilityResponse(BaseModel):
+    max_slope_percent: float = Field(gt=0)
+    minimum_accumulation: int = Field(ge=1)
+    candidate_count: int = Field(ge=0)
+    candidates: list[PondCandidateResponse] 
+
+
+class CatchmentAnalysis(BaseModel):
+    suitability: SuitabilityStats
+    candidates: list[PondCandidateResponse]
+    catchments: list[CatchmentResponse]
 
 
 class CatchmentAnalyzeResponse(BaseModel):
@@ -62,3 +116,6 @@ class CatchmentAnalyzeResponse(BaseModel):
     message: str
     terrain: TerrainStats
     hydrology: HydrologyStats
+    accumulation: FlowAccumulationStats
+    suitability: SuitabilityResponse
+    analysis: CatchmentAnalysis 

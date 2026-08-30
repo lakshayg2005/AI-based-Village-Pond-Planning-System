@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import tempfile
 import re
 import zipfile
 from dataclasses import dataclass
@@ -89,13 +91,26 @@ def parse_kml_file(path: str | Path) -> list[ContourFeature]:
             archive.close()
 
 
-def parse_kml_bytes(data: bytes, filename: str = "contours.kml") -> list[ContourFeature]:
-    """Parse uploaded KML/KMZ bytes."""
-    import io
-    import tempfile
+def parse_kml_bytes(
+    data: bytes,
+    filename: str = "contours.kml",
+) -> list[ContourFeature]:
+    """Parse uploaded KML/KMZ bytes safely on Windows."""
 
     suffix = ".kmz" if filename.lower().endswith(".kmz") else ".kml"
-    with tempfile.NamedTemporaryFile(suffix=suffix) as tmp:
-        tmp.write(data)
-        tmp.flush()
-        return parse_kml_file(tmp.name)
+
+    fd, temp_path = tempfile.mkstemp(suffix=suffix)
+
+    try:
+        with os.fdopen(fd, "wb") as tmp:
+            tmp.write(data)
+
+        # The temporary file is now closed before another
+        # function attempts to open it.
+        return parse_kml_file(temp_path)
+
+    finally:
+        try:
+            os.unlink(temp_path)
+        except FileNotFoundError:
+            pass

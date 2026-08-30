@@ -1,13 +1,8 @@
-import { useState } from 'react'
-import './App.css'
-import VillageMap from './components/VillageMap'
+import VillageMap from "./components/VillageMap";
+import "./App.css";
 
 function App() {
-  return(
-    <div>
-        <VillageMap/>
-    </div>
-  )
+  return <VillageMap />;
 }
 
-export default App
+export default App;
