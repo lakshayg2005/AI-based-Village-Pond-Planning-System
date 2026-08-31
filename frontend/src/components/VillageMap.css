@@ -748,3 +748,20 @@
         width: 300px;
     }
 }
+.download-json-button {
+    width: calc(100% - 24px);
+    margin: 12px;
+    padding: 11px 16px;
+    border: none;
+    border-radius: 8px;
+    background: #1976d2;
+    color: white;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.2s ease;
+  }
+  
+  .download-json-button:hover {
+    background: #1565c0;
+  }

@@ -4,7 +4,7 @@ from collections import deque
 from dataclasses import dataclass
 
 import numpy as np
-from shapely.geometry import Polygon, mapping
+from shapely.geometry import Polygon, mapping,MultiPolygon
 
 from .flow_service import D8_OFFSETS
 
@@ -23,7 +23,7 @@ class CatchmentResult:
     area_m2: float
     area_hectares: float
     cell_count: int
-    polygon: Polygon
+    polygon: Polygon | MultiPolygon
 
 
 def _validate_inputs(
@@ -81,6 +81,8 @@ def delineate_catchment(
     outlet_col: int,
     cell_size_x_m: float,
     cell_size_y_m: float,
+    x_m: np.ndarray,
+    y_m: np.ndarray,
 ) -> CatchmentResult:
     """
     Delineate the upstream catchment draining to an outlet cell.
@@ -186,9 +188,11 @@ def delineate_catchment(
     area_hectares = area_m2 / 10_000.0
 
     polygon = _mask_to_polygon(
-        mask,
-        cell_size_x_m,
-        cell_size_y_m,
+       mask,
+       x_m,
+       y_m,
+       cell_size_x_m,
+       cell_size_y_m,
     )
 
     return CatchmentResult(
@@ -202,30 +206,30 @@ def delineate_catchment(
 
 def _mask_to_polygon(
     mask: np.ndarray,
+    x_m: np.ndarray,
+    y_m: np.ndarray,
     cell_size_x_m: float,
     cell_size_y_m: float,
-) -> Polygon:
+) -> Polygon | MultiPolygon :
     """
-    Convert a raster catchment mask into a polygon.
+    Convert a raster catchment mask into a Shapely polygon geometry.
 
-    For the initial implementation we construct the union
-    of contributing raster cells using Shapely.
-
-    This is intentionally simple and robust for the prototype.
+    Returns:
+        Polygon for a single connected region.
+        MultiPolygon when the selected raster cells form multiple
+        disconnected regions.
     """
 
     rows, cols = mask.shape
-
     cells = []
 
     for row in range(rows):
         for col in range(cols):
-
             if not mask[row, col]:
                 continue
 
-            x0 = col * cell_size_x_m
-            y0 = row * cell_size_y_m
+            x0 = float(x_m[col])
+            y0 = float(y_m[row])
 
             x1 = x0 + cell_size_x_m
             y1 = y0 + cell_size_y_m
@@ -249,15 +253,11 @@ def _mask_to_polygon(
 
     geometry = unary_union(cells)
 
-    # A catchment should normally be one connected polygon.
-    # If tiny disconnected components occur because of unusual
-    # flow data, return the complete geometry rather than
-    # silently dropping them.
-    if geometry.geom_type == "MultiPolygon":
-        return max(
-            geometry.geoms,
-            key=lambda polygon: polygon.area,
-        )
+    # if geometry.geom_type == "MultiPolygon":
+    #     return max(
+    #         geometry.geoms,
+    #         key=lambda polygon: polygon.area,
+    #     )
 
     return geometry
 

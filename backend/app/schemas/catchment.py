@@ -86,10 +86,10 @@ class HydrologyStats(BaseModel):
 
 
 class CatchmentResponse(BaseModel):
+    rank: int = Field(ge=1)
     area_m2: float = Field(ge=0)
     area_hectares: float = Field(ge=0)
     cell_count: int = Field(ge=0)
-
     geometry: dict[str, Any]
 
 
@@ -118,4 +118,5 @@ class CatchmentAnalyzeResponse(BaseModel):
     hydrology: HydrologyStats
     accumulation: FlowAccumulationStats
     suitability: SuitabilityResponse
-    analysis: CatchmentAnalysis 
+    analysis: CatchmentAnalysis
+    map_data: dict[str, Any]
