@@ -195,7 +195,7 @@ def reconstruct_dem(
     return TerrainResult(
         elevation_grid_m=grid_z.astype(np.float32),
         x_m=x,
-        y_m=y,
+        y_m=y,  
         crs=crs.to_string(),
         bounds_lonlat=(float(min_lon), float(min_lat), float(max_lon), float(max_lat)),
         min_elevation_m=float(np.nanmin(grid_z)),

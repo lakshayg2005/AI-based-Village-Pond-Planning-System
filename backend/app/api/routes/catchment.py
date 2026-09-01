@@ -1,5 +1,4 @@
 from __future__ import annotations
-
 from pyproj import Transformer
 from shapely.geometry import Point
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile
@@ -17,7 +16,6 @@ from ...services.catchment_service import (
 )
 
 from ...services.flow_service import analyze_flow
-
 from ...services.geojson_service import (
     make_feature,
     make_feature_collection,
@@ -161,6 +159,7 @@ async def analyze_catchment(
             elevation_m=flow.filled_dem_m,
             slope_percent=terrain.slope_grid_percent,
             flow_accumulation=accumulation,
+            flow_direction=flow.flow_direction,
             max_slope_percent=max_slope_percent,
             minimum_accumulation=minimum_accumulation,
             max_candidates=max_candidates,
@@ -214,6 +213,13 @@ async def analyze_catchment(
                         candidate.flow_accumulation
                     ),
                     "score": float(candidate.score),
+                    # Advanced suitability diagnostics
+                    "basin_score": float(candidate.basin_score),
+                    "storage_score": float(candidate.storage_score),
+                    "channel_penalty": float(candidate.channel_penalty),
+                    "non_channel_score": float(candidate.non_channel_score),
+                    "local_relief_score": float(candidate.local_relief_score),
+                    "reason": candidate.reason,
                 }
             )
 
@@ -554,6 +560,11 @@ async def analyze_catchment(
                             "flow_accumulation"
                         ],
                         "score": candidate["score"],
+                        "basin_score": candidate["basin_score"],
+                        "storage_score": candidate["storage_score"],
+                        "channel_penalty": candidate["channel_penalty"],
+                        "non_channel_score": candidate["non_channel_score"],
+                        "reason": candidate["reason"],
                     },
                 )
             )

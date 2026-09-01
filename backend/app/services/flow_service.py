@@ -4,7 +4,7 @@ from dataclasses import dataclass
 import heapq
 
 import numpy as np
-
+from collections import deque
 
 # D8 direction codes.
 #
@@ -212,14 +212,50 @@ def calculate_d8_flow_direction(
     return flow_direction
 
 
+# def analyze_flow(
+#     dem: np.ndarray,
+#     cell_size_x_m: float = 1.0,
+#     cell_size_y_m: float = 1.0,
+# ) -> FlowResult:
+#     """
+#     Run sink filling followed by D8 flow-direction calculation.
+#     """
+
+#     original = _validate_dem(dem)
+
+#     filled = fill_sinks(original)
+
+#     flow_direction = calculate_d8_flow_direction(
+#         filled,
+#         cell_size_x_m=cell_size_x_m,
+#         cell_size_y_m=cell_size_y_m,
+#     )
+
+#     fill_difference = filled - original
+
+#     filled_cells = int(np.count_nonzero(fill_difference > 1e-9))
+#     max_fill_depth = float(np.max(fill_difference))
+
+#     valid_cells = int(np.count_nonzero(np.isfinite(filled)))
+#     flowing_cells = int(np.count_nonzero(flow_direction > 0))
+#     no_flow_cells = valid_cells - flowing_cells
+
+#     return FlowResult(
+#         original_dem_m=original.astype(np.float32),
+#         filled_dem_m=filled.astype(np.float32),
+#         flow_direction=flow_direction,
+#         filled_cell_count=filled_cells,
+#         max_fill_depth_m=max_fill_depth,
+#         valid_cell_count=valid_cells,
+#         flowing_cell_count=flowing_cells,
+#         no_flow_cell_count=no_flow_cells,
+#     )
+
 def analyze_flow(
     dem: np.ndarray,
     cell_size_x_m: float = 1.0,
     cell_size_y_m: float = 1.0,
 ) -> FlowResult:
-    """
-    Run sink filling followed by D8 flow-direction calculation.
-    """
 
     original = _validate_dem(dem)
 
@@ -229,6 +265,11 @@ def analyze_flow(
         filled,
         cell_size_x_m=cell_size_x_m,
         cell_size_y_m=cell_size_y_m,
+    )
+
+    flow_direction = resolve_flat_flow(
+        filled,
+        flow_direction,
     )
 
     fill_difference = filled - original
@@ -250,3 +291,85 @@ def analyze_flow(
         flowing_cell_count=flowing_cells,
         no_flow_cell_count=no_flow_cells,
     )
+
+def resolve_flat_flow(
+    dem: np.ndarray,
+    flow_direction: np.ndarray,
+) -> np.ndarray:
+    """
+    Resolve flat cells in a filled DEM.
+
+    Cells that already have a downhill D8 direction are preserved.
+    Flat cells are assigned directions toward nearby cells that can
+    drain downhill.
+
+    Boundary cells remain outlets when no valid downstream path exists.
+    """
+    elevation = _validate_dem(dem)
+
+    flow = np.asarray(flow_direction, dtype=np.uint8).copy()
+
+    rows, cols = elevation.shape
+
+    # Cells that already have a defined downstream direction.
+    drainable = flow > 0
+
+    # Boundary cells are natural drainage outlets.
+    for row in range(rows):
+        drainable[row, 0] = True
+        drainable[row, cols - 1] = True
+
+    for col in range(cols):
+        drainable[0, col] = True
+        drainable[rows - 1, col] = True
+
+    queue = deque(
+        (row, col)
+        for row in range(rows)
+        for col in range(cols)
+        if drainable[row, col]
+    )
+
+    visited = drainable.copy()
+
+    while queue:
+        row, col = queue.popleft()
+
+        for dr, dc, direction_code, _ in D8_OFFSETS:
+            nr = row + dr
+            nc = col + dc
+
+            if nr < 0 or nr >= rows or nc < 0 or nc >= cols:
+                continue
+
+            if visited[nr, nc]:
+                continue
+
+            # Only propagate through cells at the same elevation.
+            if not np.isclose(
+                elevation[nr, nc],
+                elevation[row, col],
+                atol=1e-9,
+            ):
+                continue
+
+            # The neighboring cell can reach a drainage cell.
+            visited[nr, nc] = True
+            queue.append((nr, nc))
+
+            # Direction from current cell toward this neighbor.
+            reverse_direction = {
+                (-1, 0): 1,
+                (-1, 1): 2,
+                (0, 1): 4,
+                (1, 1): 8,
+                (1, 0): 16,
+                (1, -1): 32,
+                (0, -1): 64,
+                (-1, -1): 128,
+            }
+
+            if flow[nr, nc] > 0:
+                flow[row, col] = reverse_direction[(dr, dc)]
+
+    return flow

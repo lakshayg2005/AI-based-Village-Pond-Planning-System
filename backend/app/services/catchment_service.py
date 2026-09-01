@@ -81,8 +81,8 @@ def delineate_catchment(
     outlet_col: int,
     cell_size_x_m: float,
     cell_size_y_m: float,
-    x_m: np.ndarray,
-    y_m: np.ndarray,
+    x_m: np.ndarray | None = None,
+    y_m: np.ndarray | None = None,
 ) -> CatchmentResult:
     """
     Delineate the upstream catchment draining to an outlet cell.
@@ -111,6 +111,24 @@ def delineate_catchment(
         )
 
     rows, cols = flow.shape
+    if x_m is None:
+        x_m = np.arange(cols, dtype=float) * cell_size_x_m
+
+    if y_m is None:
+        y_m = np.arange(rows, dtype=float) * cell_size_y_m
+
+    x_m = np.asarray(x_m, dtype=float)
+    y_m = np.asarray(y_m, dtype=float)
+
+    if x_m.ndim != 1 or len(x_m) != cols:
+        raise ValueError(
+            "x_m must contain one coordinate for each column"
+        )
+
+    if y_m.ndim != 1 or len(y_m) != rows:
+        raise ValueError(
+            "y_m must contain one coordinate for each row"
+        )
 
     # Build reverse adjacency:
     #

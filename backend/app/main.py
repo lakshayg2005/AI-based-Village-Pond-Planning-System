@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from .api.routes.catchment import router as catchment_router
 from fastapi.middleware.cors import CORSMiddleware
+from .api.routes.catchment_v2 import router as catchment_v2_router
 
 
 app = FastAPI(
@@ -8,7 +9,6 @@ app = FastAPI(
     description="Contour-based catchment and pond suitability analysis API",
     version="1.0.0",
 )
-app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
@@ -22,3 +22,4 @@ app.add_middleware(
 )
 
 app.include_router(catchment_router)
+app.include_router(catchment_v2_router)

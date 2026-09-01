@@ -1,4 +1,4 @@
-import{
+import {
   APIProvider,
   Map,
   Polygon,
@@ -21,7 +21,10 @@ import FileUpload from "./FileUpload";
 import CandidateList from "./CandidateList";
 import AnalysisPanel from "./AnalysisPanel";
 
-import { analyzeContourFile } from "../services/catchmentService";
+import {
+  analyzeContourFileByVersion,
+  CATCHMENT_VERSION,
+} from "../services/catchmentAnalysisService";
 
 import "./VillageMap.css";
 
@@ -34,7 +37,7 @@ const DEFAULT_CENTER = {
 
 /* =========================================================
    SEARCH BOX
-========================================================= */
+   ========================================================= */
 
 function SearchBox() {
   const map = useMap();
@@ -46,11 +49,11 @@ function SearchBox() {
     }
 
     if (!window.google?.maps?.places) {
-      console.warn(
-        "Google Places library is not loaded."
-      );
+      console.warn("Google Places library is not loaded.");
       return;
     }
+
+    containerRef.current.innerHTML = "";
 
     const searchElement =
       new google.maps.places.PlaceAutocompleteElement();
@@ -63,6 +66,10 @@ function SearchBox() {
 
     const handleSelect = async (event) => {
       try {
+        if (!event?.placePrediction) {
+          return;
+        }
+
         const place =
           event.placePrediction.toPlace();
 
@@ -97,8 +104,6 @@ function SearchBox() {
       handleSelect
     );
 
-    containerRef.current.innerHTML = "";
-
     containerRef.current.appendChild(
       searchElement
     );
@@ -125,7 +130,7 @@ function SearchBox() {
 
 /* =========================================================
    DOWNLOAD ANALYSIS JSON
-========================================================= */
+   ========================================================= */
 
 function downloadAnalysisJSON(analysis) {
   if (!analysis) {
@@ -153,323 +158,282 @@ function downloadAnalysisJSON(analysis) {
 
   link.href = url;
   link.download =
-    "catchment-analysis.json";
+    "catchment-analysis-v1.json";
 
   document.body.appendChild(link);
-
   link.click();
-
   document.body.removeChild(link);
 
   URL.revokeObjectURL(url);
 }
 
 /* =========================================================
-   GEOJSON MAP LAYER
+   GEOJSON HELPERS
+   ========================================================= */
 
-   Renders:
-   1. Catchment polygons
-   2. Candidate points
+function isFeatureCollection(value) {
+  return (
+    value &&
+    value.type === "FeatureCollection" &&
+    Array.isArray(value.features)
+  );
+}
 
-   Both are supplied by the backend.
-========================================================= */
+function normalizeFeatureCollection(value) {
+  if (!value) {
+    return null;
+  }
+
+  if (isFeatureCollection(value)) {
+    return value;
+  }
+
+  if (value.type === "Feature") {
+    return {
+      type: "FeatureCollection",
+      features: [value],
+    };
+  }
+
+  return null;
+}
+
+function getGeoJSONBounds(geojson) {
+  const bounds = {
+    minLat: Infinity,
+    maxLat: -Infinity,
+    minLng: Infinity,
+    maxLng: -Infinity,
+  };
+
+  if (!isFeatureCollection(geojson)) {
+    return null;
+  }
+
+  const collectCoordinates = (coords) => {
+    if (
+      Array.isArray(coords) &&
+      coords.length >= 2 &&
+      typeof coords[0] === "number" &&
+      typeof coords[1] === "number"
+    ) {
+      const lng = coords[0];
+      const lat = coords[1];
+
+      bounds.minLng =
+        Math.min(bounds.minLng, lng);
+
+      bounds.maxLng =
+        Math.max(bounds.maxLng, lng);
+
+      bounds.minLat =
+        Math.min(bounds.minLat, lat);
+
+      bounds.maxLat =
+        Math.max(bounds.maxLat, lat);
+
+      return;
+    }
+
+    if (Array.isArray(coords)) {
+      coords.forEach(collectCoordinates);
+    }
+  };
+
+  geojson.features.forEach((feature) => {
+    if (feature?.geometry?.coordinates) {
+      collectCoordinates(
+        feature.geometry.coordinates
+      );
+    }
+  });
+
+  if (
+    bounds.minLat === Infinity ||
+    bounds.minLng === Infinity
+  ) {
+    return null;
+  }
+
+  return bounds;
+}
+
+/* =========================================================
+   MAP LAYER TOGGLE - V1 ONLY
+   ========================================================= */
+
+function LayerControl({
+  visibility,
+  onToggle,
+  counts,
+}) {
+  return (
+    <div className="layer-control">
+      <div className="layer-control-title">
+        Map Layers
+      </div>
+
+      <label className="layer-option">
+        <input
+          type="checkbox"
+          checked={visibility.candidates}
+          onChange={() =>
+            onToggle("candidates")
+          }
+        />
+
+        <span className="layer-color candidate-color" />
+
+        <span className="layer-label">
+          Pond Candidates
+        </span>
+
+        <span className="layer-count">
+          {counts.candidates}
+        </span>
+      </label>
+
+      <label className="layer-option">
+        <input
+          type="checkbox"
+          checked={visibility.catchments}
+          onChange={() =>
+            onToggle("catchments")
+          }
+        />
+
+        <span className="layer-color catchment-color" />
+
+        <span className="layer-label">
+          Catchment Areas
+        </span>
+
+        <span className="layer-count">
+          {counts.catchments}
+        </span>
+      </label>
+    </div>
+  );
+}
+
+/* =========================================================
+   GEOJSON MAP LAYER - V1 ONLY
+
+   V1 supports:
+   - Pond candidates
+   - Catchments
+   ========================================================= */
 
 function GeoJsonLayer({
   analysis,
   candidates,
   selectedCandidate,
   onCandidateSelect,
+  visibility,
 }) {
   const map = useMap();
 
   useEffect(() => {
-    if (!map || !analysis?.map_data) {
-      return;
+    if (!map) {
+      return undefined;
     }
 
-    const candidateGeoJSON =
-      analysis.map_data.candidates;
-
-    const catchmentGeoJSON =
-      analysis.map_data.catchments;
-
-    /* -----------------------------------------------------
-       DEBUG
-    ----------------------------------------------------- */
-
-    console.log(
-      "========== GEOJSON MAP DATA =========="
-    );
-
-    console.log(
-      "Candidate GeoJSON:",
-      candidateGeoJSON
-    );
-
-    console.log(
-      "Catchment GeoJSON:",
-      catchmentGeoJSON
-    );
-
-    /* -----------------------------------------------------
-       VALIDATION
-    ----------------------------------------------------- */
-
-    if (
-      candidateGeoJSON &&
-      candidateGeoJSON.type !==
-        "FeatureCollection"
-    ) {
-      console.error(
-        "Candidate GeoJSON is not a FeatureCollection:",
-        candidateGeoJSON
-      );
-    }
-
-    if (
-      catchmentGeoJSON &&
-      catchmentGeoJSON.type !==
-        "FeatureCollection"
-    ) {
-      console.error(
-        "Catchment GeoJSON is not a FeatureCollection:",
-        catchmentGeoJSON
-      );
-    }
-
-    /* -----------------------------------------------------
-       DEBUG CATCHMENTS
-    ----------------------------------------------------- */
-
-    if (
-      catchmentGeoJSON?.features?.length
-    ) {
-      console.log(
-        "Catchment feature count:",
-        catchmentGeoJSON.features.length
-      );
-
-      catchmentGeoJSON.features.forEach(
-        (feature, index) => {
-          const coordinates =
-            feature.geometry?.coordinates;
-
-          const flattened = [];
-
-          const collectCoordinates = (
-            coords
-          ) => {
-            if (
-              Array.isArray(coords) &&
-              coords.length >= 2 &&
-              typeof coords[0] ===
-                "number" &&
-              typeof coords[1] ===
-                "number"
-            ) {
-              flattened.push(coords);
-              return;
-            }
-
-            if (Array.isArray(coords)) {
-              coords.forEach(
-                collectCoordinates
-              );
-            }
-          };
-
-          collectCoordinates(
-            coordinates
-          );
-
-          const lats =
-            flattened.map(
-              (coordinate) =>
-                coordinate[1]
-            );
-
-          const lngs =
-            flattened.map(
-              (coordinate) =>
-                coordinate[0]
-            );
-
-          console.log(
-            `========== CATCHMENT ${
-              index + 1
-            } ==========`
-          );
-
-          console.log({
-            rank:
-              feature.properties?.rank,
-
-            area_m2:
-              feature.properties?.area_m2,
-
-            area_hectares:
-              feature.properties
-                ?.area_hectares,
-
-            geometry:
-              feature.geometry?.type,
-
-            coordinateCount:
-              flattened.length,
-
-            minLatitude:
-              lats.length
-                ? Math.min(...lats)
-                : null,
-
-            maxLatitude:
-              lats.length
-                ? Math.max(...lats)
-                : null,
-
-            minLongitude:
-              lngs.length
-                ? Math.min(...lngs)
-                : null,
-
-            maxLongitude:
-              lngs.length
-                ? Math.max(...lngs)
-                : null,
-
-            firstCoordinate:
-              flattened[0],
-
-            lastCoordinate:
-              flattened[
-                flattened.length - 1
-              ],
-          });
-        }
-      );
-    }
-
-    /* -----------------------------------------------------
-       DEBUG CANDIDATES
-    ----------------------------------------------------- */
-
-    if (
-      candidateGeoJSON?.features?.length
-    ) {
-      console.log(
-        "Candidate feature count:",
-        candidateGeoJSON.features.length
-      );
-
-      candidateGeoJSON.features.forEach(
-        (feature, index) => {
-          console.log(
-            `Candidate ${index + 1}:`,
-            {
-              geometry:
-                feature.geometry?.type,
-
-              rank:
-                feature.properties?.rank,
-
-              properties:
-                feature.properties,
-
-              coordinates:
-                feature.geometry?.coordinates,
-            }
-          );
-        }
-      );
-    }
-
-    /* -----------------------------------------------------
-       CLEAR PREVIOUS GEOJSON
-    ----------------------------------------------------- */
+    /* -------------------------------------------------------
+       CLEAR OLD FEATURES
+       ------------------------------------------------------- */
 
     map.data.forEach((feature) => {
       map.data.remove(feature);
     });
 
-    /* -----------------------------------------------------
+    if (!analysis?.map_data) {
+      return undefined;
+    }
+
+    /* -------------------------------------------------------
+       V1 GEOJSON
+       ------------------------------------------------------- */
+
+    const candidateGeoJSON =
+      normalizeFeatureCollection(
+        analysis.map_data.candidates
+      );
+
+    const catchmentGeoJSON =
+      normalizeFeatureCollection(
+        analysis.map_data.catchments
+      );
+
+    console.log(
+      "========== V1 GEOJSON MAP DATA =========="
+    );
+
+    console.log(
+      "Candidates:",
+      candidateGeoJSON?.features?.length || 0
+    );
+
+    console.log(
+      "Catchments:",
+      catchmentGeoJSON?.features?.length || 0
+    );
+
+    console.log(
+      "Layer visibility:",
+      visibility
+    );
+
+    /* -------------------------------------------------------
        ADD CATCHMENTS
-    ----------------------------------------------------- */
+       ------------------------------------------------------- */
 
     if (
+      visibility.catchments &&
       catchmentGeoJSON?.features?.length
     ) {
-      console.log(
-        "RAW CATCHMENT COORDINATES:",
-        JSON.stringify(
-          catchmentGeoJSON.features[0]?.geometry?.coordinates,
-          null,
-          2
-        )
-      );
-      console.log(
-        "RAW CANDIDATE COORDINATES:",
-        JSON.stringify(
-          candidateGeoJSON?.features?.[0]?.geometry?.coordinates,
-          null,
-          2
-        )
-      ); 
-      console.log(
-        "CATCHMENT CRS:",
-        catchmentGeoJSON?.crs
-      );
-      
-      console.log(
-        "CANDIDATE CRS:",
-        candidateGeoJSON?.crs
-      ); 
-      const addedCatchments =
-        map.data.addGeoJson(
-          catchmentGeoJSON
-        );
-
-      console.log(
-        "Catchment GeoJSON features added:",
-        addedCatchments?.length
+      map.data.addGeoJson(
+        catchmentGeoJSON
       );
     }
 
-    /* -----------------------------------------------------
+    /* -------------------------------------------------------
        ADD CANDIDATES
-    ----------------------------------------------------- */
+       ------------------------------------------------------- */
 
     if (
+      visibility.candidates &&
       candidateGeoJSON?.features?.length
     ) {
-      const addedCandidates =
-        map.data.addGeoJson(
-          candidateGeoJSON
-        );
-
-      console.log(
-        "Candidate GeoJSON features added:",
-        addedCandidates?.length
+      map.data.addGeoJson(
+        candidateGeoJSON
       );
     }
 
-    /* -----------------------------------------------------
-       GEOJSON STYLING
-    ----------------------------------------------------- */
+    /* -------------------------------------------------------
+       STYLE V1 FEATURES
+       ------------------------------------------------------- */
 
     map.data.setStyle((feature) => {
       const geometry =
         feature.getGeometry();
 
+      const geometryType =
+        geometry?.getType();
+
+      const layerType =
+        feature.getProperty(
+          "layer_type"
+        );
+
       const rank =
         feature.getProperty("rank");
 
-      /* ---------------------------------------------------
+      /* -----------------------------------------------------
          CANDIDATE POINT
-      --------------------------------------------------- */
+         ----------------------------------------------------- */
 
       if (
-        geometry?.getType() ===
-        "Point"
+        geometryType === "Point"
       ) {
         const isSelected =
           Number(
@@ -482,12 +446,13 @@ function GeoJsonLayer({
               google.maps.SymbolPath.CIRCLE,
 
             scale: isSelected
-              ? 10
+              ? 11
               : 7,
 
-            fillColor: isSelected
-              ? "#D32F2F"
-              : "#1976D2",
+            fillColor:
+              isSelected
+                ? "#D32F2F"
+                : "#1976D2",
 
             fillOpacity: 1,
 
@@ -497,41 +462,74 @@ function GeoJsonLayer({
             strokeWeight: 2,
           },
 
-          zIndex: isSelected
-            ? 1000
-            : 100,
+          zIndex:
+            isSelected
+              ? 1000
+              : 100,
         };
       }
 
-      /* ---------------------------------------------------
-         CATCHMENT POLYGON
-      --------------------------------------------------- */
+      /* -----------------------------------------------------
+         V1 CATCHMENT
+         ----------------------------------------------------- */
+
+      if (
+        layerType === "catchment"
+      ) {
+        return {
+          fillColor:
+            "#2196F3",
+
+          fillOpacity:
+            0.12,
+
+          strokeColor:
+            "#1565C0",
+
+          strokeOpacity:
+            0.8,
+
+          strokeWeight:
+            2,
+
+          zIndex: 10,
+        };
+      }
+
+      /* -----------------------------------------------------
+         DEFAULT V1 CATCHMENT
+         ----------------------------------------------------- */
 
       return {
-        fillColor: "#2196F3",
+        fillColor:
+          "#2196F3",
 
-        fillOpacity: 0.18,
+        fillOpacity:
+          0.08,
 
         strokeColor:
           "#1565C0",
 
-        strokeOpacity: 1,
+        strokeOpacity:
+          0.75,
 
-        strokeWeight: 2,
+        strokeWeight:
+          1.5,
 
         zIndex: 10,
       };
     });
 
-    /* -----------------------------------------------------
-       CANDIDATE CLICK HANDLER
-    ----------------------------------------------------- */
+    /* -------------------------------------------------------
+       CANDIDATE CLICK
+       ------------------------------------------------------- */
 
-    const handleDataClick = (
-      event
-    ) => {
+    const handleDataClick = (event) => {
+      const feature =
+        event.feature;
+
       const geometry =
-        event.feature.getGeometry();
+        feature.getGeometry();
 
       if (
         geometry?.getType() !==
@@ -541,16 +539,13 @@ function GeoJsonLayer({
       }
 
       const rank =
-        event.feature.getProperty(
-          "rank"
-        );
+        feature.getProperty("rank");
 
       console.log(
-        "Clicked GeoJSON candidate:",
+        "Clicked V1 candidate:",
         {
           rank,
-          feature:
-            event.feature,
+          feature,
         }
       );
 
@@ -574,9 +569,85 @@ function GeoJsonLayer({
         handleDataClick
       );
 
-    /* -----------------------------------------------------
+    /* -------------------------------------------------------
+       FIT MAP TO V1 ANALYSIS EXTENT
+       ------------------------------------------------------- */
+
+    const boundsSources = [
+      catchmentGeoJSON,
+      candidateGeoJSON,
+    ];
+
+    const bounds = {
+      minLat: Infinity,
+      maxLat: -Infinity,
+      minLng: Infinity,
+      maxLng: -Infinity,
+    };
+
+    let hasBounds = false;
+
+    boundsSources.forEach(
+      (collection) => {
+        const collectionBounds =
+          getGeoJSONBounds(
+            collection
+          );
+
+        if (!collectionBounds) {
+          return;
+        }
+
+        hasBounds = true;
+
+        bounds.minLat =
+          Math.min(
+            bounds.minLat,
+            collectionBounds.minLat
+          );
+
+        bounds.maxLat =
+          Math.max(
+            bounds.maxLat,
+            collectionBounds.maxLat
+          );
+
+        bounds.minLng =
+          Math.min(
+            bounds.minLng,
+            collectionBounds.minLng
+          );
+
+        bounds.maxLng =
+          Math.max(
+            bounds.maxLng,
+            collectionBounds.maxLng
+          );
+      }
+    );
+
+    if (hasBounds) {
+      const googleBounds =
+        new google.maps.LatLngBounds(
+          {
+            lat: bounds.minLat,
+            lng: bounds.minLng,
+          },
+          {
+            lat: bounds.maxLat,
+            lng: bounds.maxLng,
+          }
+        );
+
+      map.fitBounds(
+        googleBounds,
+        60
+      );
+    }
+
+    /* -------------------------------------------------------
        CLEANUP
-    ----------------------------------------------------- */
+       ------------------------------------------------------- */
 
     return () => {
       listener?.remove?.();
@@ -595,6 +666,7 @@ function GeoJsonLayer({
     candidates,
     selectedCandidate,
     onCandidateSelect,
+    visibility,
   ]);
 
   return null;
@@ -602,12 +674,12 @@ function GeoJsonLayer({
 
 /* =========================================================
    MAIN VILLAGE MAP
-========================================================= */
+   ========================================================= */
 
 function VillageMap() {
-  /* -------------------------------------------------------
+  /* =======================================================
      DRAWING STATE
-  ------------------------------------------------------- */
+     ======================================================= */
 
   const [
     points,
@@ -629,9 +701,9 @@ function VillageMap() {
     setMousePosition,
   ] = useState(null);
 
-  /* -------------------------------------------------------
+  /* =======================================================
      ANALYSIS STATE
-  ------------------------------------------------------- */
+     ======================================================= */
 
   const [
     loading,
@@ -654,25 +726,53 @@ function VillageMap() {
   ] = useState(null);
 
   /* =======================================================
+     V1 MAP LAYER VISIBILITY
+     ======================================================= */
+
+  const [
+    layerVisibility,
+    setLayerVisibility,
+  ] = useState({
+    candidates: true,
+    catchments: true,
+  });
+
+  /* =======================================================
+     TOGGLE MAP LAYER
+     ======================================================= */
+
+  const toggleLayer =
+    useCallback(
+      (layerName) => {
+        setLayerVisibility(
+          (previous) => ({
+            ...previous,
+            [layerName]:
+              !previous[layerName],
+          })
+        );
+      },
+      []
+    );
+
+  /* =======================================================
      START DRAWING
-  ======================================================= */
+     ======================================================= */
 
   const startDrawing =
     useCallback(() => {
       setPoints([]);
       setPolygon([]);
       setMousePosition(null);
-
       setError(null);
       setAnalysis(null);
       setSelectedCandidate(null);
-
       setIsDrawing(true);
     }, []);
 
   /* =======================================================
      MAP CLICK / DRAW POLYGON
-  ======================================================= */
+     ======================================================= */
 
   const handleMapClick =
     useCallback(
@@ -694,8 +794,8 @@ function VillageMap() {
         };
 
         /* -------------------------------------------------
-           CLOSE POLYGON WHEN CLICKING NEAR FIRST POINT
-        ------------------------------------------------- */
+           CLOSE POLYGON
+           ------------------------------------------------- */
 
         if (points.length >= 3) {
           const firstPoint =
@@ -722,7 +822,7 @@ function VillageMap() {
 
         /* -------------------------------------------------
            ADD POINT
-        ------------------------------------------------- */
+           ------------------------------------------------- */
 
         setPoints(
           (previous) => [
@@ -731,12 +831,15 @@ function VillageMap() {
           ]
         );
       },
-      [isDrawing, points]
+      [
+        isDrawing,
+        points,
+      ]
     );
 
   /* =======================================================
      MOUSE MOVE
-  ======================================================= */
+     ======================================================= */
 
   const handleMouseMove =
     useCallback(
@@ -761,8 +864,8 @@ function VillageMap() {
     );
 
   /* =======================================================
-     FILE ANALYSIS
-  ======================================================= */
+     FILE ANALYSIS - V1
+     ======================================================= */
 
   const handleFileAnalysis =
     useCallback(
@@ -774,16 +877,25 @@ function VillageMap() {
           setSelectedCandidate(null);
 
           console.log(
-            "========== STARTING BACKEND ANALYSIS =========="
+            "========================================"
+          );
+
+          console.log(
+            "CATCHMENT VERSION:",
+            CATCHMENT_VERSION
+          );
+
+          console.log(
+            "STARTING V1 BACKEND ANALYSIS"
           );
 
           const result =
-            await analyzeContourFile(
+            await analyzeContourFileByVersion(
               file
             );
 
           console.log(
-            "========== BACKEND ANALYSIS =========="
+            "========== V1 BACKEND ANALYSIS =========="
           );
 
           console.log(
@@ -792,30 +904,53 @@ function VillageMap() {
           );
 
           console.log(
-            "Backend map_data:",
+            "Terrain:",
+            result?.terrain
+          );
+
+          console.log(
+            "Hydrology:",
+            result?.hydrology
+          );
+
+          console.log(
+            "Accumulation:",
+            result?.accumulation
+          );
+
+          console.log(
+            "Suitability:",
+            result?.suitability
+          );
+
+          console.log(
+            "Candidates:",
+            result?.candidates
+          );
+
+          console.log(
+            "Map data:",
             result?.map_data
           );
 
           console.log(
-            "Backend candidates GeoJSON:",
-            result?.map_data
-              ?.candidates
+            "Map candidates:",
+            result?.map_data?.candidates
           );
 
           console.log(
-            "Backend catchments GeoJSON:",
-            result?.map_data
-              ?.catchments
+            "Map catchments:",
+            result?.map_data?.catchments
           );
 
           console.log(
-            "======================================"
+            "========================================"
           );
 
           setAnalysis(result);
         } catch (err) {
           console.error(
-            "Terrain analysis error:",
+            "V1 terrain analysis error:",
             err
           );
 
@@ -832,13 +967,13 @@ function VillageMap() {
 
   /* =======================================================
      CANDIDATE SELECTION
-  ======================================================= */
+     ======================================================= */
 
   const handleCandidateSelect =
     useCallback(
       (candidate) => {
         console.log(
-          "Selected candidate:",
+          "Selected V1 candidate:",
           candidate
         );
 
@@ -851,44 +986,47 @@ function VillageMap() {
 
   /* =======================================================
      CLEAR MAP
-  ======================================================= */
+     ======================================================= */
 
   const clearMap =
     useCallback(() => {
       setPoints([]);
       setPolygon([]);
       setMousePosition(null);
-
       setIsDrawing(false);
-
       setAnalysis(null);
       setSelectedCandidate(null);
-
       setError(null);
     }, []);
 
   /* =======================================================
-     GET CANDIDATES
-
-     Supports the different response structures that
-     your backend has used during development.
-  ======================================================= */
+     GET V1 CANDIDATES
+     ======================================================= */
 
   const candidates =
-    analysis?.analysis
-      ?.candidates ||
-
-    analysis?.suitability
-      ?.candidates ||
-
-    analysis?.hydrology
-      ?.pond_candidates ||
-
+    analysis?.suitability?.candidates ||
+    analysis?.candidates ||
+    analysis?.hydrology?.pond_candidates ||
     [];
 
   /* =======================================================
+     LAYER COUNTS
+     ======================================================= */
+
+  const layerCounts = {
+    candidates:
+      analysis?.map_data?.candidates
+        ?.features?.length ||
+      candidates.length,
+
+    catchments:
+      analysis?.map_data?.catchments
+        ?.features?.length || 0,
+  };
+
+  /* =======================================================
      RENDER
-  ======================================================= */
+     ======================================================= */
 
   return (
     <APIProvider
@@ -898,8 +1036,8 @@ function VillageMap() {
       <div className="application">
 
         {/* =================================================
-            LEFT / MAIN MAP
-        ================================================= */}
+            MAIN MAP
+            ================================================= */}
 
         <div className="map-container">
 
@@ -907,23 +1045,15 @@ function VillageMap() {
             defaultCenter={
               DEFAULT_CENTER
             }
-
             defaultZoom={12}
-
             gestureHandling="greedy"
-
             mapTypeControl
-
             fullscreenControl
-
             streetViewControl
-
             zoomControl
-
             onClick={
               handleMapClick
             }
-
             onMousemove={
               handleMouseMove
             }
@@ -931,12 +1061,12 @@ function VillageMap() {
 
             {/* =============================================
                 USER DRAWING POINTS
-            ============================================== */}
+                ============================================= */}
 
             {points.map(
               (point, index) => (
                 <Marker
-                  key={index}
+                  key={`draw-point-${index}`}
                   position={point}
                 />
               )
@@ -944,23 +1074,20 @@ function VillageMap() {
 
             {/* =============================================
                 USER DRAWING LINE
-            ============================================== */}
+                ============================================= */}
 
             {points.length >= 2 && (
               <Polyline
                 path={points}
-
                 strokeColor="#1976D2"
-
                 strokeOpacity={1}
-
                 strokeWeight={3}
               />
             )}
 
             {/* =============================================
                 LIVE DRAWING LINE
-            ============================================== */}
+                ============================================= */}
 
             {isDrawing &&
               points.length >= 1 &&
@@ -972,62 +1099,49 @@ function VillageMap() {
                     ],
                     mousePosition,
                   ]}
-
                   strokeColor="#1976D2"
-
                   strokeOpacity={0.6}
-
                   strokeWeight={2}
                 />
               )}
 
             {/* =============================================
-                FINAL USER DRAWN POLYGON
-            ============================================== */}
+                FINAL USER POLYGON
+                ============================================= */}
 
             {polygon.length >= 4 && (
               <Polygon
                 paths={polygon}
-
                 fillColor="#2196F3"
-
                 fillOpacity={0.18}
-
                 strokeColor="#1565C0"
-
                 strokeOpacity={1}
-
                 strokeWeight={3}
               />
             )}
 
             {/* =============================================
-                BACKEND GEOJSON
-
-                Catchments + Candidates
-            ============================================== */}
+                V1 BACKEND GEOJSON
+                ============================================= */}
 
             <GeoJsonLayer
               analysis={analysis}
-
-              candidates={
-                candidates
-              }
-
+              candidates={candidates}
               selectedCandidate={
                 selectedCandidate
               }
-
               onCandidateSelect={
                 handleCandidateSelect
               }
+              visibility={
+                layerVisibility
+              }
             />
-
           </Map>
 
           {/* =================================================
               SEARCH
-          ================================================= */}
+              ================================================= */}
 
           <MapControl
             position={
@@ -1039,7 +1153,7 @@ function VillageMap() {
 
           {/* =================================================
               TOOLBAR
-          ================================================= */}
+              ================================================= */}
 
           <MapControl
             position={
@@ -1050,19 +1164,15 @@ function VillageMap() {
               isDrawing={
                 isDrawing
               }
-
               hasPolygon={
                 polygon.length >= 4
               }
-
               loading={
                 loading
               }
-
               onStartDrawing={
                 startDrawing
               }
-
               onClear={
                 clearMap
               }
@@ -1070,15 +1180,34 @@ function VillageMap() {
           </MapControl>
 
           {/* =================================================
+              V1 MAP LAYER CONTROL
+              ================================================= */}
+
+          {analysis && (
+            <div className="map-layer-control-wrapper">
+              <LayerControl
+                visibility={
+                  layerVisibility
+                }
+                onToggle={
+                  toggleLayer
+                }
+                counts={
+                  layerCounts
+                }
+              />
+            </div>
+          )}
+
+          {/* =================================================
               FILE UPLOAD
-          ================================================= */}
+              ================================================= */}
 
           <div className="upload-wrapper">
             <FileUpload
               onAnalyze={
                 handleFileAnalysis
               }
-
               loading={
                 loading
               }
@@ -1086,12 +1215,11 @@ function VillageMap() {
           </div>
 
           {/* =================================================
-              LOADING INDICATOR
-          ================================================= */}
+              V1 LOADING INDICATOR
+              ================================================= */}
 
           {loading && (
             <div className="analysis-loading">
-
               <div className="spinner" />
 
               <strong>
@@ -1099,20 +1227,19 @@ function VillageMap() {
               </strong>
 
               <span>
-                DEM → Slope → Hydrology →
-                Pond candidates
+                DEM → Slope → D8 Hydrology
+                → Flow Accumulation
+                → Pond Suitability
               </span>
-
             </div>
           )}
 
           {/* =================================================
               ERROR
-          ================================================= */}
+              ================================================= */}
 
           {error && (
             <div className="map-error">
-
               <strong>
                 Analysis failed
               </strong>
@@ -1122,32 +1249,31 @@ function VillageMap() {
               </span>
 
               <button
+                type="button"
                 onClick={() =>
                   setError(null)
                 }
               >
                 ×
               </button>
-
             </div>
           )}
-
         </div>
 
         {/* =================================================
             RIGHT SIDEBAR
-        ================================================= */}
+            ================================================= */}
 
         <aside className="analysis-sidebar">
 
           {/* ===============================================
               DOWNLOAD JSON
-          ================================================ */}
+              =============================================== */}
 
           {analysis && (
             <button
+              type="button"
               className="download-json-button"
-
               onClick={() =>
                 downloadAnalysisJSON(
                   analysis
@@ -1160,46 +1286,38 @@ function VillageMap() {
 
           {/* ===============================================
               ANALYSIS PANEL
-          ================================================ */}
+              =============================================== */}
 
           <AnalysisPanel
-            analysis={
-              analysis
-            }
+            analysis={analysis}
           />
 
           {/* ===============================================
               CANDIDATE LIST
-          ================================================ */}
+              =============================================== */}
 
           {analysis && (
             <CandidateList
               candidates={
                 candidates
               }
-
               selectedRank={
                 selectedCandidate?.rank
               }
-
               onSelect={
                 handleCandidateSelect
               }
             />
           )}
-
         </aside>
-
       </div>
     </APIProvider>
   );
 }
 
 /* =========================================================
-   DISTANCE CALCULATION
-
-   Haversine distance in meters.
-========================================================= */
+   HAVERSINE DISTANCE
+   ========================================================= */
 
 function calculateDistance(
   point1,
@@ -1216,12 +1334,14 @@ function calculateDistance(
     180;
 
   const deltaLat =
-    ((point2.lat - point1.lat) *
+    ((point2.lat -
+      point1.lat) *
       Math.PI) /
     180;
 
   const deltaLng =
-    ((point2.lng - point1.lng) *
+    ((point2.lng -
+      point1.lng) *
       Math.PI) /
     180;
 
@@ -1229,7 +1349,6 @@ function calculateDistance(
     Math.sin(
       deltaLat / 2
     ) ** 2 +
-
     Math.cos(lat1) *
       Math.cos(lat2) *
       Math.sin(
@@ -1247,3 +1366,4 @@ function calculateDistance(
 }
 
 export default VillageMap;
+
