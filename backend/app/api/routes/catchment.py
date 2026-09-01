@@ -40,9 +40,10 @@ _ALLOWED_EXTENSIONS = {".kml", ".kmz"}
     response_model=CatchmentAnalyzeResponse,
 )
 async def analyze_catchment(
-    file: UploadFile = File(
+    contour_map: UploadFile = File(
         ...,
         description="Contour map in KML or KMZ format",
+        alias="contour_map",
     ),
     grid_resolution_m: float = Query(
         10.0,
@@ -69,7 +70,7 @@ async def analyze_catchment(
         ge=1,
     ),
     max_candidates: int = Query(
-        15,
+        10,
         ge=1,
         le=100,
     ),
@@ -83,7 +84,7 @@ async def analyze_catchment(
     # Validate file extension
     # =========================================================
 
-    filename = file.filename or ""
+    filename = contour_map.filename or ""
 
     extension = (
         "." + filename.rsplit(".", 1)[-1].lower()
@@ -102,7 +103,7 @@ async def analyze_catchment(
         # 1. Read and parse contour file
         # =====================================================
 
-        data = await file.read()
+        data = await contour_map.read()
 
         if not data:
             raise ValueError("Uploaded file is empty")
