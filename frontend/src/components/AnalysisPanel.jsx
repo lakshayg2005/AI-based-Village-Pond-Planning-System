@@ -1,4 +1,8 @@
-function StatCard({ label, value, unit }) {
+function StatCard({
+  label,
+  value,
+  unit,
+}) {
   return (
     <div className="stat-card">
       <span className="stat-label">
@@ -48,6 +52,9 @@ function formatNumber(
 
 function AnalysisPanel({
   analysis,
+  contours,
+  contoursVisible = true,
+  onToggleContours,
 }) {
   if (!analysis) {
     return (
@@ -70,9 +77,11 @@ function AnalysisPanel({
     );
   }
 
-  /* =========================================================
-     V1 ANALYSIS DATA
-     ========================================================= */
+  /*
+   * =========================================================
+   * V1 ANALYSIS DATA
+   * =========================================================
+   */
 
   const terrain =
     analysis.terrain || {};
@@ -95,9 +104,11 @@ function AnalysisPanel({
   const suitability =
     analysis.suitability || {};
 
-  /* =========================================================
-     V1 CANDIDATE COUNT
-     ========================================================= */
+  /*
+   * =========================================================
+   * V1 CANDIDATE COUNT
+   * =========================================================
+   */
 
   const candidates =
     suitability.candidates ||
@@ -109,9 +120,20 @@ function AnalysisPanel({
     suitability.candidate_count ??
     candidates.length;
 
-  /* =========================================================
-     RENDER
-     ========================================================= */
+  /*
+   * =========================================================
+   * CONTOUR COUNT
+   * =========================================================
+   */
+
+  const contourCount =
+    contours?.features?.length || 0;
+
+  /*
+   * =========================================================
+   * RENDER
+   * =========================================================
+   */
 
   return (
     <div className="analysis-panel">
@@ -141,6 +163,7 @@ function AnalysisPanel({
           ===================================================== */}
 
       <section className="analysis-section">
+
         <h3>
           🌄 Terrain
         </h3>
@@ -194,7 +217,42 @@ function AnalysisPanel({
               0
             )}
           />
+
         </div>
+
+        {/* =================================================
+            CONTOUR OVERLAY CONTROL
+            ================================================= */}
+
+        <div className="contour-overlay-control">
+
+          <label className="contour-toggle">
+
+            <input
+              type="checkbox"
+              checked={contoursVisible}
+              onChange={onToggleContours}
+              disabled={contourCount === 0}
+            />
+
+            <span className="contour-toggle-text">
+              <span className="contour-toggle-title">
+                Show Contours
+              </span>
+
+              <span className="contour-toggle-count">
+                {formatNumber(
+                  contourCount,
+                  0
+                )}{" "}
+                contour lines
+              </span>
+            </span>
+
+          </label>
+
+        </div>
+
       </section>
 
       {/* =====================================================
@@ -202,6 +260,7 @@ function AnalysisPanel({
           ===================================================== */}
 
       <section className="analysis-section">
+
         <h3>
           📐 Slope
         </h3>
@@ -231,7 +290,9 @@ function AnalysisPanel({
             )}
             unit="%"
           />
+
         </div>
+
       </section>
 
       {/* =====================================================
@@ -239,6 +300,7 @@ function AnalysisPanel({
           ===================================================== */}
 
       <section className="analysis-section">
+
         <h3>
           ✓ Contour Validation
         </h3>
@@ -271,7 +333,9 @@ function AnalysisPanel({
             )}
             unit="m"
           />
+
         </div>
+
       </section>
 
       {/* =====================================================
@@ -279,6 +343,7 @@ function AnalysisPanel({
           ===================================================== */}
 
       <section className="analysis-section">
+
         <h3>
           💧 Hydrology
         </h3>
@@ -316,11 +381,13 @@ function AnalysisPanel({
               0
             )}
           />
+
         </div>
 
         <div className="algorithm-badge">
           D8 · Steepest Descent
         </div>
+
       </section>
 
       {/* =====================================================
@@ -328,6 +395,7 @@ function AnalysisPanel({
           ===================================================== */}
 
       <section className="analysis-section">
+
         <h3>
           🌊 Flow Accumulation
         </h3>
@@ -380,7 +448,9 @@ function AnalysisPanel({
               0
             )}
           />
+
         </div>
+
       </section>
 
       {/* =====================================================
@@ -388,6 +458,7 @@ function AnalysisPanel({
           ===================================================== */}
 
       <section className="analysis-section">
+
         <h3>
           🎯 Pond Suitability
         </h3>
@@ -417,11 +488,13 @@ function AnalysisPanel({
               0
             )}
           />
+
         </div>
 
         <div className="algorithm-badge">
           Slope + Flow Accumulation
         </div>
+
       </section>
 
     </div>
@@ -429,4 +502,3 @@ function AnalysisPanel({
 }
 
 export default AnalysisPanel;
-

@@ -8,7 +8,10 @@ import {
   ControlPosition,
   useMap,
 } from "@vis.gl/react-google-maps";
-
+import {
+  parseContourFile,
+  getContourBounds,
+} from "../services/contourService";
 import {
   useState,
   useCallback,
@@ -27,6 +30,7 @@ import {
 } from "../services/catchmentAnalysisService";
 
 import "./VillageMap.css";
+import ContourLayer from "./ContourLayer";
 
 const API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
 
@@ -262,59 +266,73 @@ function getGeoJSONBounds(geojson) {
    MAP LAYER TOGGLE - V1 ONLY
    ========================================================= */
 
-function LayerControl({
-  visibility,
-  onToggle,
-  counts,
-}) {
-  return (
-    <div className="layer-control">
-      <div className="layer-control-title">
-        Map Layers
+   function LayerControl({
+    visibility,
+    onToggle,
+    counts,
+  }) {
+    return (
+      <div className="layer-control">
+  
+        <div className="layer-control-title">
+          Map Layers
+        </div>
+  
+        {/* =================================================
+            POND CANDIDATES
+            ================================================= */}
+  
+        <label className="layer-option">
+  
+          <input
+            type="checkbox"
+            checked={visibility.candidates}
+            onChange={() =>
+              onToggle("candidates")
+            }
+          />
+  
+          <span className="layer-color candidate-color" />
+  
+          <span className="layer-label">
+            Pond Candidates
+          </span>
+  
+          <span className="layer-count">
+            {counts.candidates}
+          </span>
+  
+        </label>
+  
+        {/* =================================================
+            CATCHMENTS
+            ================================================= */}
+  
+        <label className="layer-option">
+  
+          <input
+            type="checkbox"
+            checked={visibility.catchments}
+            onChange={() =>
+              onToggle("catchments")
+            }
+          />
+  
+          <span className="layer-color catchment-color" />
+  
+          <span className="layer-label">
+            Catchment Areas
+          </span>
+  
+          <span className="layer-count">
+            {counts.catchments}
+          </span>
+  
+        </label>
+  
       </div>
-
-      <label className="layer-option">
-        <input
-          type="checkbox"
-          checked={visibility.candidates}
-          onChange={() =>
-            onToggle("candidates")
-          }
-        />
-
-        <span className="layer-color candidate-color" />
-
-        <span className="layer-label">
-          Pond Candidates
-        </span>
-
-        <span className="layer-count">
-          {counts.candidates}
-        </span>
-      </label>
-
-      <label className="layer-option">
-        <input
-          type="checkbox"
-          checked={visibility.catchments}
-          onChange={() =>
-            onToggle("catchments")
-          }
-        />
-
-        <span className="layer-color catchment-color" />
-
-        <span className="layer-label">
-          Catchment Areas
-        </span>
-
-        <span className="layer-count">
-          {counts.catchments}
-        </span>
-      </label>
-    </div>
-  );
-}
+    );
+  }
 
 /* =========================================================
    GEOJSON MAP LAYER - V1 ONLY
@@ -724,6 +742,7 @@ function VillageMap() {
     selectedCandidate,
     setSelectedCandidate,
   ] = useState(null);
+  const [contours, setContours] = useState(null);
 
   /* =======================================================
      V1 MAP LAYER VISIBILITY
@@ -733,6 +752,7 @@ function VillageMap() {
     layerVisibility,
     setLayerVisibility,
   ] = useState({
+    contours: true,
     candidates: true,
     catchments: true,
   });
@@ -867,103 +887,101 @@ function VillageMap() {
      FILE ANALYSIS - V1
      ======================================================= */
 
-  const handleFileAnalysis =
-    useCallback(
-      async (file) => {
-        try {
-          setLoading(true);
-          setError(null);
-          setAnalysis(null);
-          setSelectedCandidate(null);
-
-          console.log(
-            "========================================"
-          );
-
-          console.log(
-            "CATCHMENT VERSION:",
-            CATCHMENT_VERSION
-          );
-
-          console.log(
-            "STARTING V1 BACKEND ANALYSIS"
-          );
-
-          const result =
-            await analyzeContourFileByVersion(
-              file
-            );
-
-          console.log(
-            "========== V1 BACKEND ANALYSIS =========="
-          );
-
-          console.log(
-            "Complete backend response:",
-            result
-          );
-
-          console.log(
-            "Terrain:",
-            result?.terrain
-          );
-
-          console.log(
-            "Hydrology:",
-            result?.hydrology
-          );
-
-          console.log(
-            "Accumulation:",
-            result?.accumulation
-          );
-
-          console.log(
-            "Suitability:",
-            result?.suitability
-          );
-
-          console.log(
-            "Candidates:",
-            result?.candidates
-          );
-
-          console.log(
-            "Map data:",
-            result?.map_data
-          );
-
-          console.log(
-            "Map candidates:",
-            result?.map_data?.candidates
-          );
-
-          console.log(
-            "Map catchments:",
-            result?.map_data?.catchments
-          );
-
-          console.log(
-            "========================================"
-          );
-
-          setAnalysis(result);
-        } catch (err) {
-          console.error(
-            "V1 terrain analysis error:",
-            err
-          );
-
-          setError(
-            err?.message ||
-              "Terrain analysis failed."
-          );
-        } finally {
-          setLoading(false);
-        }
-      },
-      []
-    );
+     const handleFileAnalysis =
+     useCallback(
+       async (file) => {
+         try {
+           setLoading(true);
+           setError(null);
+           setAnalysis(null);
+           setSelectedCandidate(null);
+   
+           // New analysis should show contours.
+           setLayerVisibility(
+             (previous) => ({
+               ...previous,
+               contours: true,
+             })
+           );
+   
+           console.log(
+             "========================================"
+           );
+   
+           console.log(
+             "READING CONTOUR FILE:",
+             file.name
+           );
+   
+           // =========================================
+           // 1. Parse KML / KMZ in frontend
+           // =========================================
+   
+           const contourGeoJSON =
+             await parseContourFile(file);
+   
+           console.log(
+             "========== CONTOUR DATA =========="
+           );
+   
+           console.log(
+             "Contour count:",
+             contourGeoJSON?.features?.length || 0
+           );
+   
+           console.log(
+             "First contour:",
+             contourGeoJSON?.features?.[0]
+           );
+   
+           // =========================================
+           // 2. Store contours for map rendering
+           // =========================================
+   
+           setContours(
+             contourGeoJSON
+           );
+   
+           console.log(
+             "Contour overlay ready."
+           );
+   
+           // =========================================
+           // 3. Backend analysis
+           // =========================================
+   
+           const result =
+             await analyzeContourFileByVersion(
+               file
+             );
+   
+           console.log(
+             "========== BACKEND ANALYSIS =========="
+           );
+   
+           console.log(
+             "Complete backend response:",
+             result
+           );
+   
+           setAnalysis(result);
+   
+         } catch (err) {
+           console.error(
+             "Contour processing error:",
+             err
+           );
+   
+           setError(
+             err?.message ||
+               "Failed to process contour file."
+           );
+         } finally {
+           setLoading(false);
+         }
+       },
+       []
+     );
 
   /* =======================================================
      CANDIDATE SELECTION
@@ -988,16 +1006,25 @@ function VillageMap() {
      CLEAR MAP
      ======================================================= */
 
-  const clearMap =
-    useCallback(() => {
-      setPoints([]);
-      setPolygon([]);
-      setMousePosition(null);
-      setIsDrawing(false);
-      setAnalysis(null);
-      setSelectedCandidate(null);
-      setError(null);
-    }, []);
+     const clearMap =
+     useCallback(() => {
+       setPoints([]);
+       setPolygon([]);
+       setMousePosition(null);
+       setIsDrawing(false);
+   
+       setAnalysis(null);
+       setContours(null);
+   
+       setSelectedCandidate(null);
+       setError(null);
+   
+       setLayerVisibility({
+         contours: true,
+         candidates: true,
+         catchments: true,
+       });
+     }, []);
 
   /* =======================================================
      GET V1 CANDIDATES
@@ -1013,16 +1040,17 @@ function VillageMap() {
      LAYER COUNTS
      ======================================================= */
 
-  const layerCounts = {
-    candidates:
-      analysis?.map_data?.candidates
-        ?.features?.length ||
-      candidates.length,
-
-    catchments:
-      analysis?.map_data?.catchments
-        ?.features?.length || 0,
-  };
+     const layerCounts = {
+  
+      candidates:
+        analysis?.map_data?.candidates
+          ?.features?.length ||
+        candidates.length,
+    
+      catchments:
+        analysis?.map_data?.catchments
+          ?.features?.length || 0,
+    };
 
   /* =======================================================
      RENDER
@@ -1136,6 +1164,10 @@ function VillageMap() {
               visibility={
                 layerVisibility
               }
+            />
+            <ContourLayer
+              contours={contours}
+              visible={layerVisibility.contours}
             />
           </Map>
 
@@ -1288,9 +1320,16 @@ function VillageMap() {
               ANALYSIS PANEL
               =============================================== */}
 
-          <AnalysisPanel
-            analysis={analysis}
-          />
+<AnalysisPanel
+  analysis={analysis}
+  contours={contours}
+  contoursVisible={
+    layerVisibility.contours
+  }
+  onToggleContours={() =>
+    toggleLayer("contours")
+  }
+/>
 
           {/* ===============================================
               CANDIDATE LIST

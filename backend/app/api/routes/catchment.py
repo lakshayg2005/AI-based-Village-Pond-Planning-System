@@ -69,7 +69,7 @@ async def analyze_catchment(
         ge=1,
     ),
     max_candidates: int = Query(
-        10,
+        15,
         ge=1,
         le=100,
     ),

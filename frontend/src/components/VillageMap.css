@@ -765,4 +765,48 @@
   .download-json-button:hover {
     background: #1565c0;
   }
+/* =========================================================
+   CONTOUR OVERLAY CONTROL
+   ========================================================= */
+
+   .contour-overlay-control {
+    margin-top: 16px;
+    padding-top: 14px;
+    border-top: 1px solid rgba(0, 0, 0, 0.08);
+  }
+  
+  .contour-toggle {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    cursor: pointer;
+    user-select: none;
+  }
+  
+  .contour-toggle input {
+    width: 16px;
+    height: 16px;
+    margin: 0;
+    cursor: pointer;
+  }
+  
+  .contour-toggle input:disabled {
+    cursor: not-allowed;
+  }
+  
+  .contour-toggle-text {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  
+  .contour-toggle-title {
+    font-size: 14px;
+    font-weight: 600;
+  }
+  
+  .contour-toggle-count {
+    font-size: 12px;
+    opacity: 0.65;
+  }
 
