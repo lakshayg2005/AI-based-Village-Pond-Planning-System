@@ -6,6 +6,7 @@ from fastapi.staticfiles import StaticFiles
 from .api.routes.catchment import router as catchment_router
 from fastapi.middleware.cors import CORSMiddleware
 from .api.routes.area import router as area_router
+from .services.dem_service import MAX_AREA_KM2
 
 
 app = FastAPI(
@@ -33,7 +34,7 @@ app.include_router(area_router)
 
 @app.get("/api/health", tags=["Health"])
 def health() -> dict:
-    return {"status": "ok"}
+    return {"status": "ok", "max_area_km2": MAX_AREA_KM2}
 
 
 # Serve the built frontend (frontend/dist) from the same origin when present,
