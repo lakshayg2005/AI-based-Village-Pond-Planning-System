@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException
 from ...schemas.area import AreaAnalyzeRequest, AreaAnalyzeResponse
 from ...services.analysis_pipeline import run_hydrology
 from ...services.concurrency import run_exclusive
+from ...services.contour_service import dem_contours
 from ...services.dem_service import (
     AreaError,
     TileFetchError,
@@ -45,10 +46,13 @@ def _analyse(request: AreaAnalyzeRequest, polygon, rainfall):
         runoff_coefficient=request.runoff_coefficient,
     )
 
+    contours, contour_interval = dem_contours(terrain)
+    output.map_data["contours"] = contours
+
     height, width = terrain.elevation_grid_m.shape
     flow = output.flow
 
-    return terrain, dem_info, output, flow, (height, width)
+    return terrain, dem_info, output, flow, (height, width), contour_interval
 
 
 @router.post(
@@ -74,7 +78,7 @@ async def analyze_area(request: AreaAnalyzeRequest) -> AreaAnalyzeResponse:
             rainfall = fallback_rainfall()
 
     try:
-        terrain, dem_info, output, flow, (height, width) = (
+        terrain, dem_info, output, flow, (height, width), contour_interval = (
             await run_exclusive(_analyse, request, polygon, rainfall)
         )
     except AreaError as exc:
@@ -123,6 +127,7 @@ async def analyze_area(request: AreaAnalyzeRequest) -> AreaAnalyzeResponse:
             "zoom": dem_info.zoom,
             "tile_count": dem_info.tile_count,
             "grid_resolution_m": dem_info.resolution_m,
+            "contour_interval_m": contour_interval,
             "width": width,
             "height": height,
             "cell_count": width * height,

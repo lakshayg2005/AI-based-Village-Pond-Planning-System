@@ -36,7 +36,7 @@ function popupHtml(candidate) {
     ["Catchment", fmtArea(candidate.catchment_area_m2 ?? 0)],
     v && ["Water per year", fmtVolume(v.annual_runoff_m3)],
     v && ["Suggested pond", fmtVolume(v.recommended_pond.storage_capacity_m3)],
-    ["Ground slope", `${candidate.slope_percent.toFixed(1)}%`],
+    ["Land steepness", `${candidate.slope_percent.toFixed(1)}%`],
     ["Elevation", `${candidate.elevation_m.toFixed(1)} m`],
   ].filter(Boolean);
 
@@ -54,6 +54,7 @@ export default function MapView({
   onAddVertex,
   onFinishDrawing,
   contours,
+  contourInterval,
   result,
   selectedRank,
   onSelectRank,
@@ -285,6 +286,7 @@ export default function MapView({
           <label key={key}>
             <input type="checkbox" checked={layers[key]} onChange={() => onToggleLayer(key)} />
             {label}
+            {key === "contours" && contourInterval ? ` (every ${contourInterval} m)` : ""}
           </label>
         ))}
 

@@ -1,7 +1,7 @@
 import { useRef } from "react";
-import { fmtArea, fmtDec } from "../utils/geo";
+import { fmtArea } from "../utils/geo";
 
-const MIN_RELIABLE_KM2 = 0.05;
+const MIN_RELIABLE_M2 = 50000;
 
 function AreaSection({
   phase,
@@ -57,17 +57,17 @@ function AreaSection({
         <>
           <div className={`area-readout${areaTooLarge ? " bad" : ""}`}>
             <span>Selected area</span>
-            <strong>{areaKm2 >= 1 ? `${fmtDec(areaKm2)} km²` : fmtArea(areaKm2 * 1e6)}</strong>
+            <strong>{fmtArea(areaKm2 * 1e6)}</strong>
           </div>
           {areaTooLarge && (
             <p className="alert error">
-              This is above the {maxAreaKm2} km² limit. Please draw a smaller area.
+              This is above the {fmtArea(maxAreaKm2 * 1e6)} limit. Please draw a smaller area.
             </p>
           )}
-          {!areaTooLarge && areaKm2 < MIN_RELIABLE_KM2 && (
+          {!areaTooLarge && areaKm2 * 1e6 < MIN_RELIABLE_M2 && (
             <p className="alert warn">
               This area is very small. Terrain data is about 30 m resolution, so
-              results are more reliable for areas of 5 ha (0.05 km²) or more.
+              results are more reliable for areas of {fmtArea(MIN_RELIABLE_M2)} or more.
             </p>
           )}
           <div className="btn-row">
@@ -155,7 +155,10 @@ function Settings({ params, onChange, disabled }) {
           <input type="number" min="0.05" max="1" step="0.05" placeholder="Auto" value={params.runoff}
             onChange={set("runoff")} disabled={disabled} />
         </Field>
-        <Field label="Max ground slope (%)" hint="Steeper sites are skipped">
+        <Field
+          label="Max land steepness (slope %)"
+          hint="Ponds need fairly flat land. 8 means the ground rises 8 m over 100 m; steeper sites are skipped."
+        >
           <input type="number" min="1" max="100" step="1" value={params.maxSlope}
             onChange={set("maxSlope")} disabled={disabled} />
         </Field>

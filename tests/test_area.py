@@ -147,4 +147,22 @@ def test_analyze_area_rejects_oversized_polygon(fake_tiles):
 
 
 def test_health():
-    assert TestClient(app).get("/api/health").json() == {"status": "ok"}
+    body = TestClient(app).get("/api/health").json()
+    assert body["status"] == "ok"
+    assert body["max_area_km2"] > 0
+
+
+def test_area_response_includes_dem_contours(fake_tiles):
+    client = TestClient(app)
+    response = client.post(
+        "/api/analyze-area",
+        json={"polygon": SQUARE, "rainfall_mm": 1000, "minimum_accumulation": 1},
+    )
+    body = response.json()
+    contours = body["map_data"]["contours"]
+
+    assert body["terrain"]["contour_interval_m"] > 0
+    assert len(contours["features"]) > 0
+    for feature in contours["features"]:
+        assert feature["geometry"]["type"] == "LineString"
+        assert "elevation" in feature["properties"]

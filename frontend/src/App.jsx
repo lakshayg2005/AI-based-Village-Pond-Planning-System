@@ -259,7 +259,8 @@ export default function App() {
         areaTooLarge={areaTooLarge}
         onAddVertex={addVertex}
         onFinishDrawing={finishDrawing}
-        contours={mode === "file" ? contours : null}
+        contours={mode === "file" ? contours : result?.map_data?.contours ?? null}
+        contourInterval={mode === "area" ? result?.terrain?.contour_interval_m : null}
         result={result}
         selectedRank={selectedRank}
         onSelectRank={selectRank}

@@ -53,7 +53,7 @@ function PondCard({ candidate, selected, onSelect }) {
             <div><dt>Fills per year</dt><dd>~{fmtDec(v.times_filled_per_year)}×</dd></div>
             <div><dt>Water (litres)</dt><dd>{fmtInt(v.annual_runoff_litres)} L</dd></div>
             <div><dt>Runoff coefficient</dt><dd>{fmtDec(v.runoff_coefficient)}</dd></div>
-            <div><dt>Ground slope</dt><dd>{fmtDec(candidate.slope_percent)}%</dd></div>
+            <div><dt>Land steepness</dt><dd>{fmtDec(candidate.slope_percent)}%</dd></div>
             <div><dt>Elevation</dt><dd>{fmtDec(candidate.elevation_m)} m</dd></div>
             <div><dt>Location</dt><dd>{candidate.latitude.toFixed(5)}, {candidate.longitude.toFixed(5)}</dd></div>
           </dl>
@@ -61,6 +61,79 @@ function PondCard({ candidate, selected, onSelect }) {
         </div>
       )}
     </article>
+  );
+}
+
+function Method({ result, best, rainfall }) {
+  const pond = best?.volume?.recommended_pond;
+  const depth = pond?.depth_m;
+  const share =
+    pond && best.catchment_area_m2
+      ? Math.round((pond.surface_area_m2 / best.catchment_area_m2) * 100)
+      : null;
+
+  return (
+    <details className="about">
+      <summary>How this was calculated &amp; assumptions</summary>
+
+      <h4>Method</h4>
+      <ol>
+        <li>
+          {result.terrain?.source
+            ? `Ground heights come from ${result.terrain.source}, on a ${result.terrain.grid_resolution_m} m grid.`
+            : `Ground heights are rebuilt from your contour lines on a ${result.terrain?.grid_resolution_m} m grid.`}
+        </li>
+        <li>Rain is traced downhill from every cell (D8 steepest descent) to find where water gathers.</li>
+        <li>Sites on gentle slopes where a lot of water gathers are ranked highest.</li>
+        <li>The catchment of a site is all the land whose rain flows to it.</li>
+        <li>
+          Water per year = runoff coefficient × annual rainfall × catchment area.
+          {rainfall && ` Rainfall: ${rainfall.source}${rainfall.years !== "n/a" ? `, ${rainfall.years} average` : ""}.`}
+        </li>
+      </ol>
+
+      <h4>Assumptions (and why)</h4>
+      <ul>
+        {depth && (
+          <li>
+            <b>Pond depth {depth} m.</b> A typical farm pond: deep enough to
+            keep water through the dry season and lose less to evaporation,
+            yet shallow enough to dig with ordinary machinery.
+          </li>
+        )}
+        {share && (
+          <li>
+            <b>Pond surface = {share}% of its catchment.</b> A common
+            rule of thumb for farm ponds; a bigger pond than the catchment can
+            fill would sit empty.
+          </li>
+        )}
+        <li>
+          <b>Pond volume = half of surface × depth.</b> Pond sides slope
+          inwards, so a real pond holds about half of a straight-sided box.
+        </li>
+        <li>
+          <b>Runoff coefficient 0.25 (flat) to 0.55 (steep).</b> We have no
+          soil or land-cover data, so it is estimated from the catchment
+          slope: steeper land sheds more of the rain. You can enter your own
+          value in Settings.
+        </li>
+        <li>
+          <b>Rainfall is a long-term average.</b> A single year can be much
+          wetter or drier, especially with monsoon rains.
+        </li>
+        <li>
+          <b>Terrain is about 30 m resolution.</b> Small features such as
+          field bunds, roads, drains and existing ponds are not visible, so
+          check candidate sites on the ground before building.
+        </li>
+        <li>
+          <b>Water per year is the total runoff reaching the site,</b> not the
+          pond size. Evaporation and seepage are not subtracted, and the
+          pond can refill several times a year.
+        </li>
+      </ul>
+    </details>
   );
 }
 
@@ -126,18 +199,7 @@ export default function ResultsPanel({ result, selectedRank, onSelectRank }) {
         </>
       )}
 
-      <details className="about">
-        <summary>How this was calculated</summary>
-        <ul>
-          {result.terrain?.source && (
-            <li>Terrain: {result.terrain.source}, {result.terrain.grid_resolution_m} m grid.</li>
-          )}
-          <li>Rainwater flow is traced downhill (D8) to find the land draining to each site.</li>
-          <li>Water per year = runoff coefficient × annual rainfall × catchment area.</li>
-          {rainfall && <li>Rainfall: {rainfall.source}{rainfall.years !== "n/a" ? ` (${rainfall.years} average)` : ""}.</li>}
-          <li>Pond size assumes a surface of 3% of the catchment and a tapered profile.</li>
-        </ul>
-      </details>
+      <Method result={result} best={best} rainfall={rainfall} />
 
       <button className="btn ghost wide" onClick={() => downloadJson(result)}>
         ⬇ Download full result (JSON)

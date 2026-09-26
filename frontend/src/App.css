@@ -492,10 +492,25 @@ summary:focus-visible {
   color: var(--ink);
 }
 
-.about ul {
-  margin: 8px 0 0;
+.about h4 {
+  margin: 12px 0 4px;
+  font-size: 13px;
+  color: var(--ink);
+}
+
+.about ul,
+.about ol {
+  margin: 4px 0 0;
   padding-left: 18px;
   line-height: 1.5;
+}
+
+.about li {
+  margin-bottom: 5px;
+}
+
+.about b {
+  color: var(--ink);
 }
 
 /* ---------- map ---------- */
@@ -605,8 +620,8 @@ summary:focus-visible {
 
 .map-legend {
   position: absolute;
-  left: 12px;
-  bottom: 34px;
+  right: 12px;
+  top: 64px;
   z-index: 1000;
   padding: 10px 12px;
   background: rgb(255 255 255 / 0.95);

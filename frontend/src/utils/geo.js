@@ -62,11 +62,9 @@ export const fmtInt = (value) => number.format(value ?? 0);
 export const fmtDec = (value) => decimal.format(value ?? 0);
 
 export function fmtVolume(m3) {
-  if (m3 >= 1e6) return `${decimal.format(m3 / 1e6)} million m³`;
   return `${number.format(m3)} m³`;
 }
 
 export function fmtArea(m2) {
-  if (m2 >= 10000) return `${decimal.format(m2 / 10000)} ha`;
   return `${number.format(m2)} m²`;
 }

@@ -1,20 +1,36 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+import json
+import threading
+from dataclasses import asdict, dataclass
 from datetime import date
-from functools import lru_cache
+from pathlib import Path
 
 import httpx
 
-ARCHIVE_URL = "https://archive-api.open-meteo.com/v1/archive"
-YEARS_TO_AVERAGE = 5
+from .dem_service import CACHE_DIR
 
-# Used only when the rainfall service is unreachable; flagged in the response.
+NASA_URL = "https://power.larc.nasa.gov/api/temporal/climatology/point"
+OPEN_METEO_URL = "https://archive-api.open-meteo.com/v1/archive"
+
+# Kept small: Open-Meteo's free quota is per IP and charged by data volume.
+OPEN_METEO_YEARS = 3
+
+DAYS_IN_MONTH = [31, 28.25, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+MONTH_KEYS = [
+    "JAN", "FEB", "MAR", "APR", "MAY", "JUN",
+    "JUL", "AUG", "SEP", "OCT", "NOV", "DEC",
+]
+
+# Used only when every rainfall source fails; flagged in the response.
 FALLBACK_ANNUAL_MM = 1000.0
+
+_CACHE_FILE = Path(CACHE_DIR) / "rainfall_cache.json"
+_cache_lock = threading.Lock()
 
 
 class RainfallError(RuntimeError):
-    """Rainfall could not be retrieved."""
+    """Rainfall could not be retrieved from any source."""
 
 
 @dataclass(slots=True)
@@ -39,19 +55,92 @@ def manual_rainfall(annual_mm: float) -> RainfallResult:
 def fallback_rainfall() -> RainfallResult:
     result = manual_rainfall(FALLBACK_ANNUAL_MM)
     result.source = (
-        "Default value (rainfall service unavailable); "
-        "please enter rainfall manually"
+        "Rainfall could not be looked up automatically; a default of "
+        f"{FALLBACK_ANNUAL_MM:g} mm/year was used. Enter your local "
+        "rainfall in Settings for accurate results."
     )
     return result
 
 
-@lru_cache(maxsize=256)
-def _fetch(lat_key: float, lon_key: float, year0: int, year1: int):
+# ---------------------------------------------------------------------------
+# Persistent cache (rainfall at a location does not change between requests)
+# ---------------------------------------------------------------------------
+
+
+def _cache_key(lat: float, lon: float) -> str:
+    return f"{lat:.2f},{lon:.2f}"
+
+
+def _cache_read(key: str) -> RainfallResult | None:
+    try:
+        with _cache_lock:
+            data = json.loads(_CACHE_FILE.read_text())
+        return RainfallResult(**data[key])
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def _cache_write(key: str, result: RainfallResult) -> None:
+    try:
+        with _cache_lock:
+            try:
+                data = json.loads(_CACHE_FILE.read_text())
+            except (OSError, ValueError):
+                data = {}
+            data[key] = asdict(result)
+            _CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
+            _CACHE_FILE.write_text(json.dumps(data))
+    except OSError:
+        pass  # cache is best-effort
+
+
+# ---------------------------------------------------------------------------
+# Providers
+# ---------------------------------------------------------------------------
+
+
+def _from_nasa_power(lat: float, lon: float) -> RainfallResult:
+    """NASA POWER 20-year rainfall climatology (mm/day per month)."""
     response = httpx.get(
-        ARCHIVE_URL,
+        NASA_URL,
         params={
-            "latitude": lat_key,
-            "longitude": lon_key,
+            "parameters": "PRECTOTCORR",
+            "community": "AG",
+            "longitude": lon,
+            "latitude": lat,
+            "format": "JSON",
+        },
+        timeout=12.0,
+    )
+    response.raise_for_status()
+    per_day = response.json()["properties"]["parameter"]["PRECTOTCORR"]
+
+    monthly = [
+        float(per_day[key]) * days
+        for key, days in zip(MONTH_KEYS, DAYS_IN_MONTH)
+    ]
+    if any(value < 0 for value in monthly):
+        raise ValueError("NASA POWER returned no-data values")
+
+    return RainfallResult(
+        annual_mm=float(sum(monthly)),
+        monthly_mm=monthly,
+        source="NASA POWER climatology",
+        measured=True,
+        years="2001-2020",
+    )
+
+
+def _from_open_meteo(lat: float, lon: float) -> RainfallResult:
+    """Average of the last few complete years of ERA5 reanalysis."""
+    year1 = date.today().year - 1
+    year0 = year1 - OPEN_METEO_YEARS + 1
+
+    response = httpx.get(
+        OPEN_METEO_URL,
+        params={
+            "latitude": lat,
+            "longitude": lon,
             "start_date": f"{year0}-01-01",
             "end_date": f"{year1}-12-31",
             "daily": "precipitation_sum",
@@ -61,36 +150,17 @@ def _fetch(lat_key: float, lon_key: float, year0: int, year1: int):
     )
     response.raise_for_status()
     daily = response.json()["daily"]
-    return daily["time"], daily["precipitation_sum"]
-
-
-def get_annual_rainfall(latitude: float, longitude: float) -> RainfallResult:
-    """Average yearly rainfall (mm) at a point from the last full years of
-    ERA5 reanalysis via Open-Meteo (free, no API key).
-
-    Coordinates are rounded to 0.25 deg, ERA5's native resolution, which also
-    makes the result cacheable for nearby areas.
-    """
-    year1 = date.today().year - 1
-    year0 = year1 - YEARS_TO_AVERAGE + 1
-    lat_key = round(latitude * 4) / 4
-    lon_key = round(longitude * 4) / 4
-
-    try:
-        times, values = _fetch(lat_key, lon_key, year0, year1)
-    except Exception as exc:
-        raise RainfallError(f"Rainfall lookup failed: {exc}") from exc
 
     month_totals = [0.0] * 12
     valid_days = 0
-    for day, value in zip(times, values):
+    for day, value in zip(daily["time"], daily["precipitation_sum"]):
         if value is None:
             continue
         month_totals[int(day[5:7]) - 1] += float(value)
         valid_days += 1
 
     if valid_days < 365:
-        raise RainfallError("Rainfall lookup returned too little data")
+        raise ValueError("too little data returned")
 
     years = year1 - year0 + 1
     monthly = [total / years for total in month_totals]
@@ -102,3 +172,34 @@ def get_annual_rainfall(latitude: float, longitude: float) -> RainfallResult:
         measured=True,
         years=f"{year0}-{year1}",
     )
+
+
+PROVIDERS = (_from_nasa_power, _from_open_meteo)
+
+
+def get_annual_rainfall(latitude: float, longitude: float) -> RainfallResult:
+    """Yearly rainfall (mm) for a location, trying each free source in turn.
+
+    Both sources have a native resolution of roughly 0.25-0.5 degrees, so the
+    query point is rounded to 0.25 degrees; this also lets nearby areas share
+    a cached answer.
+    """
+    lat = round(latitude * 4) / 4
+    lon = round(longitude * 4) / 4
+    key = _cache_key(lat, lon)
+
+    cached = _cache_read(key)
+    if cached is not None:
+        return cached
+
+    failures = []
+    for provider in PROVIDERS:
+        try:
+            result = provider(lat, lon)
+        except Exception as exc:  # network, HTTP status, bad payload
+            failures.append(f"{provider.__name__}: {exc}")
+            continue
+        _cache_write(key, result)
+        return result
+
+    raise RainfallError("; ".join(failures))
