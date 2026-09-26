@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 import threading
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import asdict, dataclass
+from typing import Callable
 from datetime import date
 from pathlib import Path
 
@@ -110,7 +112,7 @@ def _from_nasa_power(lat: float, lon: float) -> RainfallResult:
             "latitude": lat,
             "format": "JSON",
         },
-        timeout=12.0,
+        timeout=httpx.Timeout(20.0, connect=4.0),
     )
     response.raise_for_status()
     per_day = response.json()["properties"]["parameter"]["PRECTOTCORR"]
@@ -146,7 +148,7 @@ def _from_open_meteo(lat: float, lon: float) -> RainfallResult:
             "daily": "precipitation_sum",
             "timezone": "UTC",
         },
-        timeout=20.0,
+        timeout=httpx.Timeout(10.0, connect=4.0),
     )
     response.raise_for_status()
     daily = response.json()["daily"]
@@ -192,14 +194,41 @@ def get_annual_rainfall(latitude: float, longitude: float) -> RainfallResult:
     if cached is not None:
         return cached
 
+    # Ask every source at once and take the first that answers, so a slow or
+    # blocked source cannot hold the request up.
+    futures = {_pool.submit(provider, lat, lon): provider for provider in PROVIDERS}
+    pending = set(futures)
     failures = []
-    for provider in PROVIDERS:
-        try:
-            result = provider(lat, lon)
-        except Exception as exc:  # network, HTTP status, bad payload
-            failures.append(f"{provider.__name__}: {exc}")
-            continue
-        _cache_write(key, result)
-        return result
+
+    while pending:
+        done, pending = wait(pending, return_when=FIRST_COMPLETED)
+        for future in done:
+            try:
+                result = future.result()
+            except Exception as exc:  # network, HTTP status, bad payload
+                failures.append(f"{futures[future].__name__}: {exc}")
+                continue
+            _cache_write(key, result)
+            return result
 
     raise RainfallError("; ".join(failures))
+
+
+_pool = ThreadPoolExecutor(max_workers=6)
+
+
+def lookup_async(latitude: float, longitude: float) -> Callable[[], RainfallResult]:
+    """Start a rainfall lookup in the background.
+
+    Returns a function that waits for (and returns) the result, falling back
+    to the flagged default if every source fails. Lets terrain processing run
+    while the network request is in flight.
+    """
+
+    def task() -> RainfallResult:
+        try:
+            return get_annual_rainfall(latitude, longitude)
+        except RainfallError:
+            return fallback_rainfall()
+
+    return _pool.submit(task).result

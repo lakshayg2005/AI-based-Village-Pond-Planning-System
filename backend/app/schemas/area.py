@@ -45,6 +45,7 @@ class AreaAnalyzeResponse(BaseModel):
     terrain: dict[str, Any]
     rainfall: dict[str, Any]
     summary: dict[str, Any]
+    timings: dict[str, float] | None = None
     hydrology: HydrologyStats
     accumulation: FlowAccumulationStats
     suitability: SuitabilityResponse

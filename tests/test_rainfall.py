@@ -47,3 +47,25 @@ def test_fallback_is_flagged_not_measured():
     result = rain.fallback_rainfall()
     assert result.measured is False
     assert "default" in result.source
+
+
+def test_slow_source_does_not_delay_a_fast_one(monkeypatch):
+    import time
+
+    def hung(lat, lon):
+        time.sleep(3)
+        raise TimeoutError("hung")
+
+    monkeypatch.setattr(rain, "PROVIDERS", (hung, _ok("fast")))
+
+    started = time.perf_counter()
+    result = rain.get_annual_rainfall(21.26, 81.28)
+
+    assert result.source == "fast"
+    assert time.perf_counter() - started < 1.5
+
+
+def test_lookup_async_falls_back_when_everything_fails(monkeypatch):
+    monkeypatch.setattr(rain, "PROVIDERS", (_down,))
+    result = rain.lookup_async(21.26, 81.28)()
+    assert result.measured is False

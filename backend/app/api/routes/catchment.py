@@ -1,18 +1,12 @@
 from __future__ import annotations
 
-import asyncio
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 
 from ...schemas.catchment import CatchmentAnalyzeResponse
 from ...services.analysis_pipeline import run_hydrology
 from ...services.concurrency import run_exclusive
 from ...services.kml_parser import parse_kml_bytes
-from ...services.rainfall_service import (
-    RainfallError,
-    fallback_rainfall,
-    get_annual_rainfall,
-    manual_rainfall,
-)
+from ...services.rainfall_service import lookup_async, manual_rainfall
 from ...services.terrain_service import reconstruct_dem
 
 
@@ -127,6 +121,18 @@ async def analyze_catchment(
                 "elevations were found"
             )
 
+        # Start the rainfall lookup now so it runs while the (slow) terrain
+        # reconstruction is in progress.
+        lons = [lon for c in contours for lon, _ in c.coordinates]
+        lats = [lat for c in contours for _, lat in c.coordinates]
+        centre_lon = (min(lons) + max(lons)) / 2.0
+        centre_lat = (min(lats) + max(lats)) / 2.0
+
+        if rainfall_mm is not None:
+            rainfall_source = manual_rainfall(rainfall_mm)
+        else:
+            rainfall_source = lookup_async(centre_lat, centre_lon)
+
         terrain = await run_exclusive(
             reconstruct_dem,
             contours,
@@ -135,20 +141,6 @@ async def analyze_catchment(
             method=interpolation_method,
         )
 
-        min_lon, min_lat, max_lon, max_lat = terrain.bounds_lonlat
-        centre_lat = (min_lat + max_lat) / 2.0
-        centre_lon = (min_lon + max_lon) / 2.0
-
-        if rainfall_mm is not None:
-            rainfall = manual_rainfall(rainfall_mm)
-        else:
-            try:
-                rainfall = await asyncio.to_thread(
-                    get_annual_rainfall, centre_lat, centre_lon
-                )
-            except RainfallError:
-                rainfall = fallback_rainfall()
-
         output = await run_exclusive(
             run_hydrology,
             terrain,
@@ -156,9 +148,10 @@ async def analyze_catchment(
             minimum_accumulation=minimum_accumulation,
             max_candidates=max_candidates,
             minimum_distance_cells=minimum_distance_cells,
-            rainfall=rainfall,
+            rainfall=rainfall_source,
             runoff_coefficient=runoff_coefficient,
         )
+        rainfall = output.rainfall
 
         flow = output.flow
         candidate_responses = output.candidate_responses

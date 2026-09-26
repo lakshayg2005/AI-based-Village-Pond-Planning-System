@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import io
 import math
 import os
@@ -43,6 +44,21 @@ CACHE_DIR = Path(
 )
 CACHE_LIMIT_BYTES = int(
     float(os.getenv("POND_TILE_CACHE_MB", "300")) * 1024 * 1024
+)
+
+
+# One shared connection pool: avoids a fresh TLS handshake for every tile.
+#
+# Some of S3's IP addresses can be unreachable from restricted networks, and a
+# connection attempt to one of them hangs until the OS gives up (~2 minutes).
+# A short connect timeout plus retries abandons a dead address quickly and
+# tries again, instead of waiting.
+_client = httpx.Client(
+    timeout=httpx.Timeout(10.0, connect=3.0),
+    transport=httpx.HTTPTransport(
+        retries=2,
+        limits=httpx.Limits(max_connections=8, max_keepalive_connections=8),
+    ),
 )
 
 
@@ -180,9 +196,9 @@ def _load_tile(zoom: int, x: int, y: int) -> np.ndarray:
     url = TILE_URL.format(z=zoom, x=x, y=y)
     last_error: Exception | None = None
 
-    for _ in range(3):
+    for _ in range(5):
         try:
-            response = httpx.get(url, timeout=15.0)
+            response = _client.get(url)
             response.raise_for_status()
             break
         except Exception as exc:  # network / HTTP error
@@ -199,6 +215,52 @@ def _load_tile(zoom: int, x: int, y: int) -> np.ndarray:
         pass  # cache is best-effort
 
     return _decode_terrarium(response.content)
+
+
+async def _download_tiles(coords: list[tuple[int, int, int]]) -> None:
+    """Fetch tiles concurrently, writing them to the disk cache.
+
+    The async client races connections to every address the host resolves to
+    (RFC 8305 "happy eyeballs"), so an unreachable address costs a fraction
+    of a second instead of a full connect timeout. Failures are left for the
+    synchronous fallback in _load_tile to retry and report.
+    """
+    limits = httpx.Limits(max_connections=8, max_keepalive_connections=8)
+    gate = asyncio.Semaphore(8)
+
+    async with httpx.AsyncClient(
+        timeout=httpx.Timeout(10.0, connect=3.0),
+        transport=httpx.AsyncHTTPTransport(retries=2, limits=limits),
+    ) as client:
+
+        async def fetch(zoom: int, x: int, y: int) -> None:
+            url = TILE_URL.format(z=zoom, x=x, y=y)
+            async with gate:
+                for _ in range(4):
+                    try:
+                        response = await client.get(url)
+                        response.raise_for_status()
+                    except Exception:
+                        continue
+                    try:
+                        path = _tile_path(zoom, x, y)
+                        path.parent.mkdir(parents=True, exist_ok=True)
+                        path.write_bytes(response.content)
+                    except OSError:
+                        pass  # cache is best-effort
+                    return
+
+        await asyncio.gather(*(fetch(*c) for c in coords))
+
+
+def _download_missing(coords: list[tuple[int, int, int]]) -> None:
+    missing = [c for c in coords if not _tile_path(*c).exists()]
+    if not missing:
+        return
+    try:
+        asyncio.run(_download_tiles(missing))
+    except RuntimeError:
+        pass  # already inside an event loop; the sync fallback handles it
 
 
 def _prune_cache() -> None:
@@ -292,6 +354,8 @@ def build_terrain_from_polygon(
         for ty in range(ty0, ty1 + 1)
         for tx in range(tx0, tx1 + 1)
     ]
+
+    _download_missing(coords)
 
     with ThreadPoolExecutor(max_workers=8) as pool:
         tiles = list(pool.map(lambda c: _load_tile(*c), coords))

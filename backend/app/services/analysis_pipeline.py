@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Callable
 
 import numpy as np
 from pyproj import Transformer
@@ -30,6 +31,7 @@ class HydrologyOutput:
     candidate_responses: list[dict]
     catchment_responses: list[dict]
     map_data: dict
+    rainfall: RainfallResult | None = None
 
 
 def run_hydrology(
@@ -40,7 +42,7 @@ def run_hydrology(
     max_candidates: int,
     minimum_distance_cells: int,
     analysis_mask: np.ndarray | None = None,
-    rainfall: RainfallResult | None = None,
+    rainfall: RainfallResult | Callable[[], RainfallResult] | None = None,
     runoff_coefficient: float | None = None,
 ) -> HydrologyOutput:
     """Sink filling, D8 flow, accumulation, pond ranking and catchments.
@@ -48,7 +50,9 @@ def run_hydrology(
     analysis_mask: optional boolean grid; pond candidates are only chosen
     where it is True, but flow is computed over the whole terrain so that
     catchments can extend beyond the mask.
-    rainfall: when given, each pond also gets a water-volume estimate.
+    rainfall: when given, each pond also gets a water-volume estimate. May be
+    a function returning the rainfall, evaluated only once the terrain work is
+    done, so a background lookup can overlap with it.
     """
     flow = analyze_flow(
         terrain.elevation_grid_m,
@@ -75,6 +79,9 @@ def run_hydrology(
         max_candidates=max_candidates,
         minimum_distance_cells=minimum_distance_cells,
     )
+
+    if callable(rainfall):
+        rainfall = rainfall()
 
     to_wgs84 = Transformer.from_crs(
         terrain.crs, "EPSG:4326", always_xy=True
@@ -193,4 +200,5 @@ def run_hydrology(
             "candidates": make_feature_collection(candidate_features),
             "catchments": make_feature_collection(catchment_features),
         },
+        rainfall=rainfall,
     )

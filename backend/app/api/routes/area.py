@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import asyncio
+import time
 
 from fastapi import APIRouter, HTTPException
 
@@ -15,12 +15,7 @@ from ...services.dem_service import (
     parse_polygon,
     polygon_mask,
 )
-from ...services.rainfall_service import (
-    RainfallError,
-    fallback_rainfall,
-    get_annual_rainfall,
-    manual_rainfall,
-)
+from ...services.rainfall_service import lookup_async, manual_rainfall
 
 router = APIRouter(
     prefix="/api",
@@ -28,13 +23,26 @@ router = APIRouter(
 )
 
 
-def _analyse(request: AreaAnalyzeRequest, polygon, rainfall):
+def _analyse(request: AreaAnalyzeRequest, polygon, rainfall_source):
+    started = time.perf_counter()
+    timings: dict[str, float] = {}
+
     terrain, dem_info = build_terrain_from_polygon(polygon)
     mask = polygon_mask(terrain, polygon)
+    timings["terrain_s"] = time.perf_counter() - started
 
     if not mask.any():
         raise AreaError("Selected area is too small to analyse")
 
+    rainfall_wait = [0.0]
+
+    def resolve_rainfall():
+        waited_from = time.perf_counter()
+        result = rainfall_source()
+        rainfall_wait[0] = time.perf_counter() - waited_from
+        return result
+
+    hydrology_started = time.perf_counter()
     output = run_hydrology(
         terrain,
         max_slope_percent=request.max_slope_percent,
@@ -42,17 +50,26 @@ def _analyse(request: AreaAnalyzeRequest, polygon, rainfall):
         max_candidates=request.max_candidates,
         minimum_distance_cells=request.minimum_distance_cells,
         analysis_mask=mask,
-        rainfall=rainfall,
+        rainfall=resolve_rainfall,
         runoff_coefficient=request.runoff_coefficient,
     )
+    timings["rainfall_wait_s"] = rainfall_wait[0]
+    timings["hydrology_s"] = (
+        time.perf_counter() - hydrology_started - rainfall_wait[0]
+    )
 
+    contours_started = time.perf_counter()
     contours, contour_interval = dem_contours(terrain)
     output.map_data["contours"] = contours
+    timings["contours_s"] = time.perf_counter() - contours_started
 
     height, width = terrain.elevation_grid_m.shape
     flow = output.flow
 
-    return terrain, dem_info, output, flow, (height, width), contour_interval
+    return (
+        terrain, dem_info, output, flow, (height, width),
+        contour_interval, timings,
+    )
 
 
 @router.post(
@@ -67,24 +84,27 @@ async def analyze_area(request: AreaAnalyzeRequest) -> AreaAnalyzeResponse:
 
     centroid = polygon.centroid
 
+    request_started = time.perf_counter()
+
+    # The lookup starts now and runs while the terrain is being processed.
     if request.rainfall_mm is not None:
-        rainfall = manual_rainfall(request.rainfall_mm)
+        rainfall_source = lambda: manual_rainfall(request.rainfall_mm)  # noqa: E731
     else:
-        try:
-            rainfall = await asyncio.to_thread(
-                get_annual_rainfall, centroid.y, centroid.x
-            )
-        except RainfallError:
-            rainfall = fallback_rainfall()
+        rainfall_source = lookup_async(centroid.y, centroid.x)
 
     try:
-        terrain, dem_info, output, flow, (height, width), contour_interval = (
-            await run_exclusive(_analyse, request, polygon, rainfall)
-        )
+        (
+            terrain, dem_info, output, flow, (height, width),
+            contour_interval, timings,
+        ) = await run_exclusive(_analyse, request, polygon, rainfall_source)
     except AreaError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except TileFetchError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    rainfall = output.rainfall
+    timings["total_s"] = time.perf_counter() - request_started
+    timings = {name: round(value, 2) for name, value in timings.items()}
 
     candidates = output.candidate_responses
     best = candidates[0] if candidates else None
@@ -151,6 +171,7 @@ async def analyze_area(request: AreaAnalyzeRequest) -> AreaAnalyzeResponse:
             "years": rainfall.years,
         },
         summary=summary,
+        timings=timings,
         hydrology={
             "dem_filled": flow.filled_cell_count > 0,
             "filled_cell_count": flow.filled_cell_count,

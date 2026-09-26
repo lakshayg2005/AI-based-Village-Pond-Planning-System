@@ -38,6 +38,7 @@ def _fake_tile(zoom, x, y):
 @pytest.fixture
 def fake_tiles(monkeypatch):
     monkeypatch.setattr(dem_service, "_load_tile", _fake_tile)
+    monkeypatch.setattr(dem_service, "_download_missing", lambda coords: None)
     monkeypatch.setattr(dem_service, "_prune_cache", lambda: None)
 
 
@@ -166,3 +167,74 @@ def test_area_response_includes_dem_contours(fake_tiles):
     for feature in contours["features"]:
         assert feature["geometry"]["type"] == "LineString"
         assert "elevation" in feature["properties"]
+
+
+def test_tile_download_retries_after_a_connect_timeout(monkeypatch, tmp_path):
+    from io import BytesIO
+
+    import httpx
+    from PIL import Image
+
+    buffer = BytesIO()
+    Image.new("RGB", (256, 256), (128, 10, 128)).save(buffer, format="PNG")
+
+    class FlakyClient:
+        calls = 0
+
+        def get(self, url):
+            FlakyClient.calls += 1
+            if FlakyClient.calls <= 2:
+                raise httpx.ConnectTimeout("dead address")
+
+            class Response:
+                content = buffer.getvalue()
+
+                def raise_for_status(self):
+                    pass
+
+            return Response()
+
+    monkeypatch.setattr(dem_service, "_client", FlakyClient())
+    monkeypatch.setattr(dem_service, "CACHE_DIR", tmp_path)
+
+    tile = dem_service._load_tile.__wrapped__(13, 5000, 3000)
+
+    assert FlakyClient.calls == 3
+    assert np.allclose(tile, 10.5)
+
+
+def test_async_download_writes_tiles_to_cache(monkeypatch, tmp_path):
+    from io import BytesIO
+
+    import httpx
+    from PIL import Image
+
+    buffer = BytesIO()
+    Image.new("RGB", (256, 256), (128, 10, 128)).save(buffer, format="PNG")
+    body = buffer.getvalue()
+
+    calls = []
+
+    def handler(request):
+        calls.append(str(request.url))
+        return httpx.Response(200, content=body)
+
+    real_client = httpx.AsyncClient
+
+    def mock_client(*args, **kwargs):
+        kwargs.pop("transport", None)
+        return real_client(*args, transport=httpx.MockTransport(handler), **kwargs)
+
+    monkeypatch.setattr(dem_service.httpx, "AsyncClient", mock_client)
+    monkeypatch.setattr(dem_service, "CACHE_DIR", tmp_path)
+
+    coords = [(13, 5000, 3000), (13, 5001, 3000), (13, 5000, 3001)]
+    dem_service._download_missing(coords)
+
+    assert len(calls) == 3
+    for coord in coords:
+        assert dem_service._tile_path(*coord).exists()
+
+    # Everything is cached now: a second call must not touch the network.
+    dem_service._download_missing(coords)
+    assert len(calls) == 3
