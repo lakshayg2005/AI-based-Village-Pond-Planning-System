@@ -232,7 +232,7 @@ export default function Sidebar({
         {loading && (
           <p className="help center">
             {mode === "area"
-              ? "Fetching terrain and analysing water flow…"
+              ? "Fetching terrain and analysing water flow… A new area can take up to a minute the first time; repeat areas are much faster."
               : "Reading contours and analysing water flow… large files can take about 30 s."}
           </p>
         )}
