@@ -71,7 +71,7 @@ def test_catchment_analyze_returns_hydrology_and_suitability():
     response = client.post(
         "/api/catchment/analyze",
         files={
-            "file": (
+            "contour_map": (
                 "test.kml",
                 io.BytesIO(kml),
                 "application/vnd.google-earth.kml+xml",

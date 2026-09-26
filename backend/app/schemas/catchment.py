@@ -71,6 +71,10 @@ class PondCandidateResponse(BaseModel):
     slope_percent: float
     flow_accumulation: int = Field(ge=1)
     score: float = Field(ge=0, le=1)
+    reason: str | None = None
+    catchment_area_m2: float | None = None
+    catchment_area_hectares: float | None = None
+    volume: dict[str, Any] | None = None
 
 
 class HydrologyStats(BaseModel):
@@ -91,6 +95,7 @@ class CatchmentResponse(BaseModel):
     area_hectares: float = Field(ge=0)
     cell_count: int = Field(ge=0)
     geometry: dict[str, Any]
+    volume: dict[str, Any] | None = None
 
 
 class SuitabilityStats(BaseModel):
@@ -120,3 +125,4 @@ class CatchmentAnalyzeResponse(BaseModel):
     suitability: SuitabilityResponse
     analysis: CatchmentAnalysis
     map_data: dict[str, Any]
+    rainfall: dict[str, Any] | None = None
