@@ -23,6 +23,9 @@ router = APIRouter(
 
 _ALLOWED_EXTENSIONS = {".kml", ".kmz"}
 
+# Protects the small (512 MB) deployment host from oversized uploads.
+MAX_UPLOAD_BYTES = 15 * 1024 * 1024
+
 
 @router.post(
     "/analyze",
@@ -100,7 +103,18 @@ async def analyze_catchment(
         )
 
     try:
-        data = await contour_map.read()
+        # Read one byte past the limit so oversized files are rejected
+        # without buffering them entirely.
+        data = await contour_map.read(MAX_UPLOAD_BYTES + 1)
+
+        if len(data) > MAX_UPLOAD_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=(
+                    "File is too large. The maximum upload size is "
+                    f"{MAX_UPLOAD_BYTES // (1024 * 1024)} MB."
+                ),
+            )
 
         if not data:
             raise ValueError("Uploaded file is empty")

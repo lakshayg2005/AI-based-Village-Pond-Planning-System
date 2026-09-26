@@ -10,6 +10,10 @@ from shapely.geometry import LineString
 
 from .kml_parser import ContourFeature
 
+# Upper bound on DEM cells; keeps memory within a 512 MB host. Larger maps are
+# automatically processed on a coarser grid instead of failing.
+MAX_GRID_CELLS = 250_000
+
 
 @dataclass(slots=True)
 class TerrainResult:
@@ -141,6 +145,20 @@ def reconstruct_dem(
     crs = _utm_crs(all_lon, all_lat)
     transformer = Transformer.from_crs("EPSG:4326", crs, always_xy=True)
     inverse = Transformer.from_crs(crs, "EPSG:4326", always_xy=True)
+
+    # Coarsen the grid for very large maps so memory stays bounded.
+    corners_x, corners_y = transformer.transform(
+        [all_lon.min(), all_lon.max(), all_lon.min(), all_lon.max()],
+        [all_lat.min(), all_lat.min(), all_lat.max(), all_lat.max()],
+    )
+    extent_x = float(np.ptp(corners_x))
+    extent_y = float(np.ptp(corners_y))
+    cells = (extent_x / grid_resolution_m + 1) * (extent_y / grid_resolution_m + 1)
+    if cells > MAX_GRID_CELLS:
+        grid_resolution_m = float(
+            math.ceil(grid_resolution_m * math.sqrt(cells / MAX_GRID_CELLS))
+        )
+        sample_spacing_m = None
 
     spacing = sample_spacing_m or max(grid_resolution_m / 2.0, 1.0)
     sample_x, sample_y, sample_z = _sample_contour_points(contours, transformer, spacing)
