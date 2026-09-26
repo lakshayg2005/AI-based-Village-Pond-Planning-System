@@ -16,3 +16,6 @@ env/
 # OS generated files
 .DS_Store
 Thumbs.db
+
+# Downloaded elevation tile cache
+backend/.tile_cache/

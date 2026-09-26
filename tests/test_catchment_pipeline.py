@@ -72,7 +72,7 @@ def test_full_catchment_pipeline():
     response = client.post(
         "/api/catchment/analyze",
         files={
-            "file": (
+            "contour_map": (
                 "test.kml",
                 io.BytesIO(kml),
                 "application/vnd.google-earth.kml+xml",
